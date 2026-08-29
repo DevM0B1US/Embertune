@@ -128,13 +128,6 @@ struct DownloadState {
     order: Vec<u64>,
 }
 
-impl Inner {
-    fn with_jobs<T>(&self, f: impl FnOnce(&mut HashMap<u64, Job>) -> T) -> T {
-        let mut st = self.state.lock().unwrap();
-        f(&mut st.jobs)
-    }
-}
-
 impl DownloadManager {
     pub fn new(app: AppHandle, db: Arc<Db>, settings: Arc<SettingsStore>) -> Self {
         DownloadManager {
@@ -221,17 +214,21 @@ impl DownloadManager {
     pub fn clear_finished(&self) {
         let mut st = self.inner.state.lock().unwrap();
         let active = [JobStatus::Queued, JobStatus::Downloading];
-        st.order.retain(|id| {
-            let keep = st
-                .jobs
-                .get(id)
-                .map(|j| active.contains(&j.status))
-                .unwrap_or(false);
-            if !keep {
-                st.jobs.remove(id);
-            }
-            keep
-        });
+        let dead: Vec<u64> = st
+            .order
+            .iter()
+            .copied()
+            .filter(|id| {
+                st.jobs
+                    .get(id)
+                    .map(|j| !active.contains(&j.status))
+                    .unwrap_or(true)
+            })
+            .collect();
+        for id in &dead {
+            st.jobs.remove(id);
+        }
+        st.order.retain(|id| !dead.contains(id));
     }
 }
 
@@ -280,7 +277,8 @@ const MAX_PLAYLIST_TRACKS: usize = 1000;
 /// job so the UI shows real per-track progress.
 async fn run_playlist(inner: &Arc<Inner>, id: u64) {
     {
-        let mut jobs = inner.state.lock().unwrap().jobs;
+        let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
         if let Some(j) = jobs.get_mut(&id) {
             j.status = JobStatus::Downloading;
             j.title = "Resolving playlist…".into();
@@ -289,9 +287,10 @@ async fn run_playlist(inner: &Arc<Inner>, id: u64) {
     emit_job(inner, id);
 
     let url = inner
-        .jobs
+        .state
         .lock()
         .unwrap()
+        .jobs
         .get(&id)
         .map(|j| j.url.clone())
         .unwrap_or_default();
@@ -308,9 +307,10 @@ async fn run_playlist(inner: &Arc<Inner>, id: u64) {
 
     {
         let cancelled = inner
-            .jobs
+            .state
             .lock()
             .unwrap()
+            .jobs
             .get(&id)
             .map(|j| j.status == JobStatus::Cancelled)
             .unwrap_or(false);
@@ -338,7 +338,8 @@ async fn run_playlist(inner: &Arc<Inner>, id: u64) {
             for e in entries {
                 let child = push_job(inner, track_url(&url, &e), kind);
                 {
-                    let mut jobs = inner.state.lock().unwrap().jobs;
+                    let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                     if let Some(j) = jobs.get_mut(&child) {
                         j.title = e.title.clone();
                         j.group_id = Some(id);
@@ -355,7 +356,8 @@ async fn run_playlist(inner: &Arc<Inner>, id: u64) {
                 });
             }
             {
-                let mut jobs = inner.state.lock().unwrap().jobs;
+                let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.status = JobStatus::Completed;
                     j.percent = 100.0;
@@ -379,7 +381,8 @@ async fn run_playlist(inner: &Arc<Inner>, id: u64) {
             let db_playlist = inner.db.create_playlist_unique("Playlist".into()).ok();
             let child = push_job(inner, url.clone(), kind_of(&url));
             {
-                let mut jobs = inner.state.lock().unwrap().jobs;
+                let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&child) {
                     j.group_id = Some(id);
                     j.db_playlist = db_playlist;
@@ -394,7 +397,8 @@ async fn run_playlist(inner: &Arc<Inner>, id: u64) {
                 run_job(inner2, child).await;
             });
             {
-                let mut jobs = inner.state.lock().unwrap().jobs;
+                let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.status = JobStatus::Completed;
                     j.title = "Playlist — downloading as one job".into();
@@ -671,7 +675,8 @@ async fn run_job(inner: Arc<Inner>, id: u64) {
     };
 
     {
-        let mut jobs = inner.state.lock().unwrap().jobs;
+        let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
         // cancelled while waiting on the permit — don't resurrect it
         let cancelled = jobs
             .get(&id)
@@ -699,7 +704,8 @@ async fn run_job(inner: Arc<Inner>, id: u64) {
         if let Ok(Some(existing)) = inner.db.track_id_by_source_url(&job.url) {
             let _ = inner.db.add_to_playlist(pid, existing);
             {
-                let mut jobs = inner.state.lock().unwrap().jobs;
+                let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.status = JobStatus::Completed;
                     j.percent = 100.0;
@@ -840,7 +846,8 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
     while let Ok(Some(line)) = lines.next_line().await {
         if let Some(rest) = line.strip_prefix("TITLE:") {
             {
-                let mut jobs = inner.state.lock().unwrap().jobs;
+                let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.title = rest.to_string();
                 }
@@ -857,7 +864,8 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
                 -1.0
             };
             {
-                let mut jobs = inner.state.lock().unwrap().jobs;
+                let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.downloaded = downloaded;
                     j.total = total;
@@ -878,7 +886,8 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
             paths.push(p.to_string());
         } else if ytdlp_skipped(&line) {
             {
-                let mut jobs = inner.state.lock().unwrap().jobs;
+                let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.skipped = true;
                 }
@@ -891,7 +900,8 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
             if is_playlist_url(&job.url) {
                 if let Some(pid) = job.group_id {
                     let changed = {
-                        let mut jobs = inner.state.lock().unwrap().jobs;
+                        let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                         let mut c = false;
                         if let Some(g) = jobs.get_mut(&pid) {
                             if g.group_total != total_items || g.group_done != item.saturating_sub(1) {
@@ -924,9 +934,10 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
 
     let was_cancelled = {
         inner
-            .jobs
+            .state
             .lock()
             .unwrap()
+            .jobs
             .get(&id)
             .map(|j| j.status == JobStatus::Cancelled)
             .unwrap_or(false)
@@ -971,7 +982,8 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
                 }
             }
             {
-                let mut jobs = inner.state.lock().unwrap().jobs;
+                let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.status = JobStatus::Completed;
                     j.percent = 100.0;
@@ -1102,7 +1114,8 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
     });
 
     {
-        let mut jobs = inner.state.lock().unwrap().jobs;
+        let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
         if let Some(j) = jobs.get_mut(&id) {
             // playlist children already carry their real song title from the
             // resolved entry — don't replace it with the generic marker
@@ -1135,7 +1148,8 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
                 &mon_before,
             );
             let stop = {
-                let mut jobs = mon_inner.state.lock().unwrap().jobs;
+                let mut _st = mon_inner.state.lock().unwrap();
+                let jobs = &mut _st.jobs;
                 let Some(j) = jobs.get_mut(&mon_id) else {
                     return;
                 };
@@ -1182,7 +1196,8 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
                 let compl = spotdl_complete(&raw);
                 let sk = spotdl_skipped(&raw);
                 {
-                    let mut jobs = inner.state.lock().unwrap().jobs;
+                    let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                     if let Some(j) = jobs.get_mut(&id) {
                         if let Some(p) = pct {
                             j.percent = p;
@@ -1214,7 +1229,8 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
                 if let (Some((done, total)), Some(pid)) = (compl, job.group_id) {
                     if is_playlist_url(&job.url) {
                         let changed = {
-                            let mut jobs = inner.state.lock().unwrap().jobs;
+                            let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                             let mut c = false;
                             if let Some(g) = jobs.get_mut(&pid) {
                                 if g.group_total != total || g.group_done != done {
@@ -1240,7 +1256,8 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
                     if is_playlist_url(&job.url) {
                         if let Some(pid) = job.group_id {
                             let changed = {
-                                let mut jobs = inner.state.lock().unwrap().jobs;
+                                let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                                 let mut c = false;
                                 if let Some(g) = jobs.get_mut(&pid) {
                                     g.group_skipped += delta;
@@ -1278,9 +1295,10 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
 
     let was_cancelled = {
         inner
-            .jobs
+            .state
             .lock()
             .unwrap()
+            .jobs
             .get(&id)
             .map(|j| j.status == JobStatus::Cancelled)
             .unwrap_or(false)
@@ -1324,7 +1342,8 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
                 }
             }
             {
-                let mut jobs = inner.state.lock().unwrap().jobs;
+                let mut _st = inner.state.lock().unwrap();
+        let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.status = JobStatus::Completed;
                     j.percent = 100.0;
@@ -1360,7 +1379,8 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
 }
 
 fn set_job_error(inner: &Inner, id: u64, msg: String) {
-    let mut jobs = inner.state.lock().unwrap().jobs;
+    let mut _st = inner.state.lock().unwrap();
+    let jobs = &mut _st.jobs;
     if let Some(j) = jobs.get_mut(&id) {
         if j.status != JobStatus::Cancelled {
             j.status = JobStatus::Error;
@@ -1602,9 +1622,10 @@ pub fn sweep_orphaned_partials(dir: &std::path::Path) {
 
 fn has_active_jobs(inner: &Inner) -> bool {
     inner
-        .jobs
+        .state
         .lock()
         .unwrap()
+        .jobs
         .values()
         .any(|j| matches!(j.status, JobStatus::Queued | JobStatus::Downloading))
 }

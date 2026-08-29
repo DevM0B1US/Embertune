@@ -7,7 +7,6 @@ mod settings;
 use db::{Db, NewTrack, Playlist, Track};
 use downloader::{DownloadManager, JobView};
 use player::{Player, PlayerState};
-use settings::Settings;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -717,16 +716,16 @@ async fn get_lyrics(
     title: String,
     artist: String,
     duration: i64,
-) -> Option<String> {
+) -> Result<Option<String>, String> {
     // Resolve the real path from the DB — never trust a raw path from the webview.
-    let track_path = db.get_track(track_id).ok().flatten()?.path;
+    let track_path = db.get_track(track_id).ok().flatten().ok_or("track not found")?.path;
     let p = std::path::Path::new(&track_path);
     // 1) Cached duration-matched LRCLIB lyrics (the reliable source).
     let cached = p.with_extension("lrclib");
     if cached.is_file() {
         if let Ok(s) = std::fs::read_to_string(&cached) {
             if !s.trim().is_empty() {
-                return Some(s);
+                return Ok(Some(s));
             }
         }
     }
@@ -744,10 +743,10 @@ async fn get_lyrics(
     .flatten();
     if let Some(lrc) = fetched {
         let _ = std::fs::write(&cached, &lrc);
-        return Some(lrc);
+        return Ok(Some(lrc));
     }
     // 3) Fall back to lyrics already sitting next to the file (spotdl, manual).
-    local_lyrics(p)
+    Ok(local_lyrics(p))
 }
 
 #[tauri::command]
