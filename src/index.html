@@ -213,7 +213,6 @@
               id="now-art-img"
               class="thumb-img hidden"
               alt=""
-              onerror="this.classList.add('hidden'); document.querySelector('.thumb-fallback')?.classList.remove('hidden');"
             />
             <div class="thumb-fallback">
               <i data-lucide="Music2" width="18" height="18"></i>
@@ -341,7 +340,7 @@
         </div>
       </div>
 
-      <div id="toast" class="toast hidden"></div>
+      <div id="toast" class="toast hidden" aria-live="polite"></div>
     </div>
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
       <defs>

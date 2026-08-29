@@ -90,7 +90,7 @@ function renderLibraryTracks(list: HTMLElement, shown: Track[]): void {
     li.dataset.id = String(t.id);
     li.innerHTML = `
       <button class="play-btn" title="Play">${ICON_PLAY}</button>
-      <img class="track-art hidden" alt="" draggable="false" onerror="this.classList.add('hidden'); this.removeAttribute('src');" />
+      <img class="track-art hidden" alt="" draggable="false" />
       <div class="track-meta">
         <div class="track-title">${esc(t.title)}</div>
         <div class="track-sub">${esc(t.artist || "—")} · ${fmtDur(t.duration)}</div>
@@ -174,7 +174,7 @@ async function loadRowArt(t: Track, li: HTMLElement): Promise<void> {
     return;
   }
   try {
-    const p = await invoke<string | null>("get_art", { trackPath: t.path });
+    const p = await invoke<string | null>("get_art", { trackId: t.id });
     if (p) {
       artCache.set(t.id, p);
       setRowArt(li, p);
@@ -187,6 +187,10 @@ async function loadRowArt(t: Track, li: HTMLElement): Promise<void> {
 function setRowArt(li: HTMLElement, p: string): void {
   const img = li.querySelector<HTMLImageElement>(".track-art");
   if (!img) return;
+  img.addEventListener("error", () => {
+    img.classList.add("hidden");
+    img.removeAttribute("src");
+  }, { once: true });
   img.src = p;
   img.classList.remove("hidden");
 }
@@ -233,7 +237,7 @@ async function loadTrackMeta(t: Track): Promise<void> {
   box.innerHTML = "";
   let m: TrackMetaInfo | null;
   try {
-    m = await invoke<TrackMetaInfo | null>("get_track_meta", { trackPath: t.path });
+    m = await invoke<TrackMetaInfo | null>("get_track_meta", { trackId: t.id });
   } catch {
     m = null;
   }

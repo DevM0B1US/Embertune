@@ -61,13 +61,34 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     pub fn load(path: PathBuf) -> Self {
-        let data = fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+        let data = match fs::read_to_string(&path) {
+            Ok(s) => match serde_json::from_str::<Settings>(&s) {
+                Ok(settings) => settings,
+                Err(e) => {
+                    eprintln!("settings.json parse error: {e} — using defaults");
+                    // Preserve the corrupt file as a .bak so the user can inspect it.
+                    let _ = fs::copy(&path, path.with_extension("json.bak"));
+                    Settings::default()
+                }
+            },
+            Err(_) => Settings::default(),
+        };
         SettingsStore {
             path,
             data: Mutex::new(data),
+        }
+    }
+
+    /// Atomic persist: write to a temp file then rename. Prevents corruption
+    /// from crashes mid-write.
+    fn persist(&self, settings: &Settings) {
+        let s = match serde_json::to_string_pretty(settings) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let tmp = self.path.with_extension("json.tmp");
+        if fs::write(&tmp, &s).is_ok() {
+            let _ = fs::rename(&tmp, &self.path);
         }
     }
 
@@ -79,29 +100,25 @@ impl SettingsStore {
         let mut d = self.data.lock().unwrap();
         d.spotify_client_id = id;
         d.spotify_client_secret = secret;
-        let s = serde_json::to_string_pretty(&*d).unwrap_or_default();
-        let _ = fs::write(&self.path, s);
+        self.persist(&d);
     }
 
     pub fn set_download_dir(&self, dir: String) {
         let mut d = self.data.lock().unwrap();
         d.download_dir = Some(dir);
-        let s = serde_json::to_string_pretty(&*d).unwrap_or_default();
-        let _ = fs::write(&self.path, s);
+        self.persist(&d);
     }
 
     pub fn set_quality(&self, quality: String) {
         let mut d = self.data.lock().unwrap();
         d.quality = quality;
-        let s = serde_json::to_string_pretty(&*d).unwrap_or_default();
-        let _ = fs::write(&self.path, s);
+        self.persist(&d);
     }
 
     pub fn set_theme(&self, theme: String) {
         let mut d = self.data.lock().unwrap();
         d.theme = theme;
-        let s = serde_json::to_string_pretty(&*d).unwrap_or_default();
-        let _ = fs::write(&self.path, s);
+        self.persist(&d);
     }
 
     pub fn set_playback(&self, shuffle: Option<bool>, repeat: Option<String>, speed: Option<f64>) {
@@ -115,15 +132,13 @@ impl SettingsStore {
         if let Some(s) = speed {
             d.speed = s;
         }
-        let s = serde_json::to_string_pretty(&*d).unwrap_or_default();
-        let _ = fs::write(&self.path, s);
+        self.persist(&d);
     }
 
     pub fn set_sleep_timer(&self, minutes: Option<i64>) {
         let mut d = self.data.lock().unwrap();
         d.sleep_timer = minutes;
-        let s = serde_json::to_string_pretty(&*d).unwrap_or_default();
-        let _ = fs::write(&self.path, s);
+        self.persist(&d);
     }
 
     pub fn set_fade(&self, enabled: bool, duration: f64) {
@@ -132,15 +147,13 @@ impl SettingsStore {
         if duration > 0.0 {
             d.fade_duration = duration;
         }
-        let s = serde_json::to_string_pretty(&*d).unwrap_or_default();
-        let _ = fs::write(&self.path, s);
+        self.persist(&d);
     }
 
     pub fn set_eq_bands(&self, bands: Vec<f64>) {
         let mut d = self.data.lock().unwrap();
         d.eq_bands = bands;
-        let s = serde_json::to_string_pretty(&*d).unwrap_or_default();
-        let _ = fs::write(&self.path, s);
+        self.persist(&d);
     }
 
     pub fn set_effect(&self, effect: Option<String>) {
@@ -148,15 +161,13 @@ impl SettingsStore {
         if let Some(e) = effect {
             d.sound_effect = e;
         }
-        let s = serde_json::to_string_pretty(&*d).unwrap_or_default();
-        let _ = fs::write(&self.path, s);
+        self.persist(&d);
     }
 
     pub fn set_window_controls(&self, enabled: bool) {
         let mut d = self.data.lock().unwrap();
         d.window_controls = enabled;
-        let s = serde_json::to_string_pretty(&*d).unwrap_or_default();
-        let _ = fs::write(&self.path, s);
+        self.persist(&d);
     }
 }
 

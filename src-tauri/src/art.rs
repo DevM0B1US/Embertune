@@ -1,6 +1,4 @@
 use crate::settings::data_dir;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -9,10 +7,40 @@ pub fn art_dir() -> PathBuf {
 }
 
 /// Deterministic art cache filename for a given audio file path.
+/// Uses FNV-1a (deterministic across process restarts, unlike DefaultHasher
+/// which randomizes seeds per process).
 pub fn art_path_for(track_path: &str) -> PathBuf {
-    let mut h = DefaultHasher::new();
-    track_path.hash(&mut h);
-    art_dir().join(format!("{:016x}.jpg", h.finish()))
+    let hash = fnv1a(track_path);
+    art_dir().join(format!("{:016x}.jpg", hash))
+}
+
+/// FNV-1a 64-bit — deterministic, stable across runs, no external deps.
+fn fnv1a(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn art_path_is_deterministic() {
+        let p1 = art_path_for("/home/user/Music/song.m4a");
+        let p2 = art_path_for("/home/user/Music/song.m4a");
+        assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn different_paths_produce_different_hashes() {
+        let p1 = art_path_for("/a.m4a");
+        let p2 = art_path_for("/b.m4a");
+        assert_ne!(p1, p2);
+    }
 }
 
 pub fn art_file_exists(track_path: &str) -> bool {

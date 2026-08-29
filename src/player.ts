@@ -28,7 +28,6 @@ import { markPlayingRow, playTrack } from "./library";
 import type { PlayerState, SeekTarget } from "./lib";
 
 // --- queue ---
-// --- queue ---
 let dragFrom: number | null = null;
 
 export function renderQueue(): void {
@@ -107,7 +106,7 @@ export async function loadLyrics(): Promise<void> {
   box.textContent = "Loading…";
   try {
     const raw = await invoke<string | null>("get_lyrics", {
-      trackPath: t.path,
+      trackId: t.id,
       title: t.title,
       artist: t.artist,
       duration: t.duration,
@@ -529,7 +528,7 @@ async function loadNowArt(): Promise<void> {
     return;
   }
   try {
-    const p = await invoke<string | null>("get_art", { trackPath: t.path });
+    const p = await invoke<string | null>("get_art", { trackId: t.id });
     if (p) {
       artCache.set(t.id, p);
       setNowArt(p, img, fallback);
@@ -549,6 +548,12 @@ function setNowArt(p: string, img: HTMLImageElement, fallback: HTMLElement): voi
   fallback.classList.add("hidden");
 }
 
+// CSP-safe: no inline onerror — listener lives here instead.
+$("#now-art-img").addEventListener("error", () => {
+  ($("#now-art-img") as HTMLImageElement).classList.add("hidden");
+  $(".thumb-fallback").classList.remove("hidden");
+});
+
 // --- settings ---
 function applyTheme(t: string): void {
   document.documentElement.dataset.theme = t;
@@ -567,13 +572,16 @@ $("#theme-pills").addEventListener("click", (e) => {
 export async function loadSettings(): Promise<void> {
   const s = await invoke<{
     spotify_client_id: string | null;
-    spotify_client_secret: string | null;
+    has_spotify_creds: boolean;
     quality: string;
     theme: string;
     window_controls: boolean;
   }>("get_settings");
   setVal("#spot-id", s.spotify_client_id || "");
-  setVal("#spot-secret", s.spotify_client_secret || "");
+  // Never populate the secret into the DOM — show placeholder only.
+  const secretEl = $("#spot-secret") as HTMLInputElement;
+  secretEl.value = "";
+  secretEl.placeholder = s.has_spotify_creds ? "••••••••" : "";
   setVal("#dl-dir", await invoke<string>("get_download_dir"));
   applyQualityPill(s.quality || "best");
   applyTheme(s.theme || "glass");

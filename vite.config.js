@@ -10,6 +10,6 @@ export default defineConfig({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
-    target: "esnext",
+    target: "es2021",
   },
 });

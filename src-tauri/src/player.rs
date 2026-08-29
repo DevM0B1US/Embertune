@@ -45,6 +45,8 @@ struct IpcConn {
 impl IpcConn {
     fn connect(sock: &std::path::Path) -> std::io::Result<Self> {
         let out = UnixStream::connect(sock)?;
+        out.set_read_timeout(Some(Duration::from_secs(2)))?;
+        out.set_write_timeout(Some(Duration::from_secs(2)))?;
         let inp = out.try_clone()?;
         Ok(IpcConn {
             out,

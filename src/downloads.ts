@@ -120,7 +120,7 @@ function buildSingleRow(j: JobView): HTMLLIElement {
   li.innerHTML = `
     <div class="track-meta">
       <div class="track-title">${active ? '<span class="spinner"></span>' : ""}${esc(j.title || "Resolving…")}</div>
-      <div class="track-sub">${sub}</div>
+      <div class="track-sub">${esc(sub)}</div>
     </div>
     <div class="dl-progress"><div class="dl-fill" style="width:${pct}%"></div></div>
   `;

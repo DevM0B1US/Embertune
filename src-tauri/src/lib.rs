@@ -97,9 +97,59 @@ fn scan_music_dir(db: &Arc<Db>, dir: &std::path::Path) -> usize {
     added
 }
 
+/// Validate a download URL before it reaches yt-dlp/spotdl argv.
+/// Rejects leading `-` (argument injection), non-http(s) schemes, and hosts
+/// not on the allowlist.
+fn validate_download_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("empty URL".into());
+    }
+    if trimmed.starts_with('-') {
+        return Err("URL must not start with '-'".into());
+    }
+    // spotify: URIs are allowed as-is (spotdl handles them)
+    if trimmed.starts_with("spotify:") {
+        return Ok(trimmed.to_string());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+        return Err("URL must be http(s) or spotify: scheme".into());
+    }
+    // Extract host from the URL
+    let without_scheme = if lower.starts_with("https://") {
+        &trimmed[8..]
+    } else {
+        &trimmed[7..]
+    };
+    let host = without_scheme
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    const ALLOWED_HOSTS: &[&str] = &[
+        "youtube.com",
+        "www.youtube.com",
+        "youtu.be",
+        "music.youtube.com",
+        "open.spotify.com",
+        "spotify.com",
+        "lrclib.net",
+    ];
+    if ALLOWED_HOSTS.iter().any(|h| *h == host) {
+        Ok(trimmed.to_string())
+    } else {
+        Err(format!("host '{host}' is not on the allowlist"))
+    }
+}
+
 #[tauri::command]
-fn add_download(dm: State<DownloadManager>, url: String) -> u64 {
-    dm.add(url)
+fn add_download(dm: State<DownloadManager>, url: String) -> Result<u64, String> {
+    let validated = validate_download_url(&url)?;
+    Ok(dm.add(validated))
 }
 
 #[tauri::command]
@@ -126,11 +176,21 @@ fn get_library(db: State<Arc<Db>>) -> Result<Vec<Track>, String> {
 fn remove_track(
     app: AppHandle,
     db: State<Arc<Db>>,
+    s: State<Arc<settings::SettingsStore>>,
     id: i64,
 ) -> Result<(), String> {
     if let Some(t) = db.get_track(id).map_err(|e| e.to_string())? {
         db.remove_track(id).map_err(|e| e.to_string())?;
-        let _ = std::fs::remove_file(&t.path);
+        // Only delete the file if it resides inside the download dir —
+        // never delete arbitrary paths from the webview.
+        let dl = s.get().resolved_download_dir();
+        if let Ok(abs) = std::fs::canonicalize(&t.path) {
+            if let Ok(dl_abs) = std::fs::canonicalize(&dl) {
+                if abs.starts_with(&dl_abs) {
+                    let _ = std::fs::remove_file(&abs);
+                }
+            }
+        }
         let _ = app.emit("library-changed", ());
     }
     Ok(())
@@ -138,6 +198,15 @@ fn remove_track(
 
 #[tauri::command]
 fn add_local_file(db: State<Arc<Db>>, path: String) -> Result<bool, String> {
+    let p = std::path::Path::new(&path);
+    // Validate: file must exist, be a regular file, and have an audio extension.
+    if !p.is_file() {
+        return Err("path is not a file".into());
+    }
+    let name = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    if !is_audio_file(&name) {
+        return Err("file is not an audio type".into());
+    }
     if db
         .track_id_by_path(&path)
         .map_err(|e| e.to_string())?
@@ -145,7 +214,7 @@ fn add_local_file(db: State<Arc<Db>>, path: String) -> Result<bool, String> {
     {
         return Ok(false);
     }
-    let title = std::path::Path::new(&path)
+    let title = p
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| path.clone());
@@ -224,9 +293,44 @@ fn get_player_state(p: State<Player>) -> PlayerState {
     p.state()
 }
 
+#[derive(serde::Serialize)]
+struct SettingsView {
+    spotify_client_id: Option<String>,
+    has_spotify_creds: bool,
+    download_dir: Option<String>,
+    quality: String,
+    shuffle: bool,
+    repeat: String,
+    speed: f64,
+    sleep_timer: Option<i64>,
+    theme: String,
+    fade_enabled: bool,
+    fade_duration: f64,
+    eq_bands: Vec<f64>,
+    sound_effect: String,
+    window_controls: bool,
+}
+
 #[tauri::command]
-fn get_settings(s: State<Arc<settings::SettingsStore>>) -> Settings {
-    s.get()
+fn get_settings(s: State<Arc<settings::SettingsStore>>) -> SettingsView {
+    let inner = s.get();
+    SettingsView {
+        // Never return the secret to the webview — only whether creds exist.
+        spotify_client_id: inner.spotify_client_id.clone(),
+        has_spotify_creds: inner.spotify_client_id.is_some() && inner.spotify_client_secret.is_some(),
+        download_dir: inner.download_dir,
+        quality: inner.quality,
+        shuffle: inner.shuffle,
+        repeat: inner.repeat,
+        speed: inner.speed,
+        sleep_timer: inner.sleep_timer,
+        theme: inner.theme,
+        fade_enabled: inner.fade_enabled,
+        fade_duration: inner.fade_duration,
+        eq_bands: inner.eq_bands,
+        sound_effect: inner.sound_effect,
+        window_controls: inner.window_controls,
+    }
 }
 
 #[tauri::command]
@@ -265,7 +369,9 @@ struct TrackMeta {
 }
 
 #[tauri::command]
-fn get_track_meta(track_path: String) -> Option<TrackMeta> {
+fn get_track_meta(db: State<Arc<Db>>, track_id: i64) -> Option<TrackMeta> {
+    // Resolve the real path from the DB — never trust a raw path from the webview.
+    let track_path = db.get_track(track_id).ok().flatten()?.path;
     let out = std::process::Command::new("ffprobe")
         .args([
             "-v",
@@ -359,10 +465,16 @@ fn update_engines(app: AppHandle) {
 fn tail_str(b: &[u8], max: usize) -> String {
     let s = String::from_utf8_lossy(b).trim().to_string();
     let s = s.lines().last().unwrap_or("").to_string();
-    if s.len() > max {
-        format!("…{}", &s[s.len() - max..])
-    } else {
+    // Char-boundary-safe truncation — avoids the panic that byte-offset
+    // slicing (`&s[s.len()-max..]`) causes on multi-byte UTF-8.
+    if s.chars().count() <= max {
         s
+    } else {
+        let start = s.char_indices().nth(s.chars().count() - max).map(|(i, _)| i);
+        match start {
+            Some(i) => format!("…{}", &s[i..]),
+            None => s,
+        }
     }
 }
 
@@ -600,11 +712,14 @@ fn urlencode(s: &str) -> String {
 
 #[tauri::command]
 async fn get_lyrics(
-    track_path: String,
+    db: State<'_, Arc<Db>>,
+    track_id: i64,
     title: String,
     artist: String,
     duration: i64,
 ) -> Option<String> {
+    // Resolve the real path from the DB — never trust a raw path from the webview.
+    let track_path = db.get_track(track_id).ok().flatten()?.path;
     let p = std::path::Path::new(&track_path);
     // 1) Cached duration-matched LRCLIB lyrics (the reliable source).
     let cached = p.with_extension("lrclib");
@@ -641,8 +756,10 @@ fn set_sleep_timer(s: State<Arc<settings::SettingsStore>>, minutes: Option<i64>)
 }
 
 #[tauri::command]
-fn get_art(track_path: String) -> Option<String> {
+fn get_art(db: State<Arc<Db>>, track_id: i64) -> Option<String> {
     use base64::Engine;
+    // Resolve the real path from the DB — never trust a raw path from the webview.
+    let track_path = db.get_track(track_id).ok().flatten()?.path;
     let p = art::art_path_for(&track_path);
     std::fs::read(&p)
         .ok()
@@ -650,7 +767,12 @@ fn get_art(track_path: String) -> Option<String> {
 }
 
 #[tauri::command]
-fn extract_art(track_path: String) -> bool {
+fn extract_art(db: State<Arc<Db>>, track_id: i64) -> bool {
+    // Resolve the real path from the DB — never trust a raw path from the webview.
+    let track_path = match db.get_track(track_id).ok().flatten() {
+        Some(t) => t.path,
+        None => return false,
+    };
     art::extract_cover(&track_path)
 }
 
