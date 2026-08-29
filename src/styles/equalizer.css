@@ -1,0 +1,79 @@
+/* --- equalizer panel (graphic EQ) --- */
+/* All rules are scoped to #eq-panel so they never leak into the rest of the
+   UI (the player's animated now-playing indicator uses .eq-bars too). */
+#eq-panel .eq-bars {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 4px 0;
+}
+
+#eq-panel .eq-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+#eq-panel .eq-gain {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-faint);
+  min-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+#eq-panel .eq-stage {
+  position: relative;
+  width: 100%;
+  max-width: 44px;
+  height: 150px;
+}
+
+#eq-panel .eq-zero {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: var(--border-soft);
+  transform: translateY(-0.5px);
+}
+
+#eq-panel .eq-bar {
+  position: absolute;
+  left: 50%;
+  width: 60%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  border-radius: 3px;
+  box-shadow: 0 0 8px rgba(255, 107, 53, 0.35);
+  transition: height 0.08s linear, background 0.12s;
+}
+
+#eq-panel .eq-bar.neg {
+  background: var(--accent);
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+#eq-panel input.eq-slider {
+  position: absolute;
+  width: 150px;
+  height: 4px;
+  left: 50%;
+  top: 50%;
+  margin: 0;
+  opacity: 0;
+  cursor: ns-resize;
+  transform: translate(-50%, -50%) rotate(-90deg);
+}
+
+#eq-panel .eq-freq {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+}

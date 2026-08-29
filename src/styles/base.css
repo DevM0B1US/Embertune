@@ -1,0 +1,87 @@
+:root {
+  --bg: rgba(18, 19, 22, 0.92);
+  --bg-2: rgba(24, 26, 30, 0.88);
+  --bg-3: rgba(35, 38, 43, 0.8);
+  --fg: #e8e6e3;
+  --fg-dim: #9a9a9f;
+  --fg-faint: #6b6e75;
+  --accent: #ff6b35;
+  --accent-2: #ff9a5c;
+  --accent-soft: rgba(255, 107, 53, 0.12);
+  --accent-soft-border: rgba(255, 107, 53, 0.32);
+  --ok: #4cd97b;
+  --err: #ff5252;
+  --border: #33373e;
+  --border-soft: #282c32;
+  --radius: 10px;
+  --font-ui: "Inter", "Lato", "Cantarell", system-ui, sans-serif;
+  --mono: "Noto Sans Mono", "DejaVu Sans Mono", ui-monospace, "SF Mono",
+    Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+html {
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  position: relative;
+  font-family: var(--font-ui);
+  background: transparent;
+  color: var(--fg);
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(255, 107, 53, 0.28);
+  color: var(--fg);
+}
+
+button {
+  font-family: inherit;
+}
+
+#app {
+  position: absolute;
+  inset: 12px;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 84px;
+  grid-template-areas:
+    "main"
+    "player";
+  background: var(--bg);
+  border: 2px solid var(--accent);
+  border-radius: 14px;
+  overflow: hidden;
+  -webkit-backdrop-filter: blur(90px) saturate(1.4);
+  backdrop-filter: blur(90px) saturate(1.4);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 40px rgba(0, 0, 0, 0.35);
+}
+
+#app::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 999;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.04;
+  mix-blend-mode: overlay;
+}
+

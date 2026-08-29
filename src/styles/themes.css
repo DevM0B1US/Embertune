@@ -1,0 +1,217 @@
+
+/* --- themes --- */
+html[data-theme="dark"] {
+  --bg: #121316;
+  --bg-2: #181a1e;
+  --bg-3: #23262b;
+  --border: #33373e;
+  --border-soft: #282c32;
+}
+
+html[data-theme="light"] {
+  --bg: #f7f3ec;
+  --bg-2: #ffffff;
+  --bg-3: #efe9df;
+  --fg: #2b2622;
+  --fg-dim: #6b645c;
+  --fg-faint: #9c948a;
+  --accent: #e2542a;
+  --accent-2: #ff6b35;
+  --accent-soft: rgba(226, 84, 42, 0.1);
+  --accent-soft-border: rgba(226, 84, 42, 0.3);
+  --ok: #1f9d55;
+  --err: #d93025;
+  --border: #d9d2c7;
+  --border-soft: #e7e0d5;
+}
+
+/* flat / light stay transparent outside the rounded #app frame, exactly like
+   the glass theme — the solid look comes from opaque surfaces inside the app,
+   not from painting the whole window */
+html[data-theme="dark"] #app,
+html[data-theme="dark"] #topbar,
+html[data-theme="dark"] #player,
+html[data-theme="dark"] .settings-card,
+html[data-theme="dark"] .drawer,
+html[data-theme="dark"] .menu,
+html[data-theme="light"] #app,
+html[data-theme="light"] #topbar,
+html[data-theme="light"] #player,
+html[data-theme="light"] .settings-card,
+html[data-theme="light"] .drawer,
+html[data-theme="light"] .menu {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-theme="dark"] #app,
+html[data-theme="light"] #app {
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 40px rgba(0, 0, 0, 0.25);
+}
+
+html[data-theme="light"] #app {
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.6),
+    inset 0 0 40px rgba(0, 0, 0, 0.05);
+}
+
+html[data-theme="light"] #app::after {
+  opacity: 0.02;
+}
+
+html[data-theme="light"] #settings-overlay,
+html[data-theme="light"] #prompt-overlay,
+html[data-theme="light"] #meta-overlay {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: #c9c2b6;
+  background-clip: padding-box;
+}
+
+/* --- small screens --- */
+@media (max-width: 1000px) {
+  #topbar {
+    padding: 12px 14px;
+    gap: 7px;
+  }
+  .view {
+    padding: 12px 14px;
+  }
+  .view-head {
+    padding: 10px 14px;
+  }
+  #player {
+    gap: 14px;
+    padding: 0 12px;
+  }
+  .player-right {
+    gap: 8px;
+  }
+  .speed-btn {
+    padding: 0 8px;
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar-sep {
+    display: none;
+  }
+  .lib-actions #search {
+    max-width: 130px;
+  }
+  #local-btn {
+    display: none;
+  }
+}
+
+/* adaptive topbar icons — drop secondary actions as width shrinks */
+@media (max-width: 780px) {
+  #btn-playlists,
+  #btn-lyrics {
+    display: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .topbtn {
+    width: 32px;
+    height: 32px;
+  }
+  #add-btn {
+    padding: 9px 12px;
+  }
+}
+
+/* compact — snapped to ~half screen (620–820px) */
+@media (max-width: 820px) {
+  #topbar {
+    gap: 6px;
+    padding: 10px 12px;
+  }
+  #url-input {
+    padding: 8px 10px;
+    font-size: 13px;
+    min-width: 0;
+  }
+  #player {
+    gap: 10px;
+    padding: 0 10px;
+  }
+  .transport {
+    gap: 10px;
+  }
+  .progress-row {
+    gap: 6px;
+  }
+  .thumb {
+    width: 40px;
+    height: 40px;
+    margin-right: 10px;
+  }
+  .lib-actions {
+    gap: 6px;
+  }
+  .lib-actions #search {
+    max-width: 110px;
+  }
+  .view {
+    padding: 10px 12px;
+  }
+  .settings-modal {
+    width: min(620px, calc(100vw - 40px));
+  }
+}
+
+@media (max-width: 700px) {
+  #volume {
+    display: none;
+  }
+  .player-right {
+    gap: 6px;
+  }
+  .speed-btn {
+    padding: 0 7px;
+  }
+  .lib-actions #search {
+    display: none;
+  }
+}
+
+@media (max-height: 660px) {
+  #app {
+    grid-template-rows: 1fr 74px;
+  }
+  #topbar {
+    padding: 10px 14px;
+  }
+  .track {
+    padding: 7px 10px;
+  }
+  #player {
+    padding: 0 12px;
+  }
+  .thumb {
+    width: 40px;
+    height: 40px;
+  }
+  .settings-card {
+    max-height: calc(100% - 32px);
+  }
+}
+
+/* --- reduced motion: kill decorative animation, keep function --- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  #track-list .track {
+    animation: none !important;
+  }
+}
