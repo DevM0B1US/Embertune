@@ -30,16 +30,40 @@ import {
 } from "./lib";
 import type { Track } from "./lib";
 
-// ── virtual scroll engine ───────────────────────────────────────────
+// ── virtual scroll constants ────────────────────────────────────────
 const ROW_H = 46;
-const BUFFER = 8;
-let lastStart = -1;
-let lastEnd = -1;
+const BUFFER = 6;
+const SCROLL_THRESHOLD = ROW_H * 2;
+const POOL_CAP = 80;
+
+// ── cached state ────────────────────────────────────────────────────
+let cachedItems: Track[] = [];
+let filterVersion = 0;
+let lastRangeStart = -1;
+let lastRangeEnd = -1;
+let lastScrollTop = -1;
 let rafPending = false;
+
 const list = document.getElementById("track-list") as HTMLElement;
 const view = document.getElementById("view-library") as HTMLElement;
 const empty = document.getElementById("empty-library") as HTMLElement;
+
+// ── row pool (reuse DOM nodes instead of destroy/recreate) ──────────
+const pool: HTMLLIElement[] = [];
 const trackRef = new WeakMap<HTMLElement, Track>();
+
+function acquireRow(): HTMLLIElement {
+  const li = pool.pop()!;
+  li.classList.add("in");
+  return li;
+}
+
+function releaseRow(li: HTMLLIElement): void {
+  li.remove();
+  if (pool.length < POOL_CAP) pool.push(li);
+}
+
+// ── artwork observer (single, shared) ───────────────────────────────
 const artObserver = new IntersectionObserver(
   (entries) => {
     for (const e of entries) {
@@ -53,7 +77,19 @@ const artObserver = new IntersectionObserver(
   { root: view, rootMargin: "600px 0px", threshold: 0 }
 );
 
-function shown(): Track[] {
+// ── filter/sort (cached, only recomputes when inputs change) ────────
+function getItems(): Track[] {
+  return cachedItems;
+}
+
+function invalidateFilter(): void {
+  filterVersion++;
+  cachedItems = computeFiltered();
+  lastRangeStart = -1;
+  lastRangeEnd = -1;
+}
+
+function computeFiltered(): Track[] {
   let out = tracks;
   if (favOnly) out = out.filter((t) => t.favorite);
   if (searchTerm) {
@@ -70,18 +106,21 @@ function shown(): Track[] {
   });
 }
 
-function onScroll(): void {
-  if (!rafPending) {
-    rafPending = true;
-    requestAnimationFrame(renderVisible);
-  }
-}
+// ── scroll → render pipeline ────────────────────────────────────────
+view.addEventListener(
+  "scroll",
+  () => {
+    if (!rafPending) {
+      rafPending = true;
+      requestAnimationFrame(flushRender);
+    }
+  },
+  { passive: true }
+);
 
-view.addEventListener("scroll", onScroll, { passive: true });
-
-function renderVisible(): void {
+function flushRender(): void {
   rafPending = false;
-  const items = shown();
+  const items = getItems();
   const total = items.length;
   const scrollTop = view.scrollTop;
   const viewH = view.clientHeight;
@@ -91,33 +130,65 @@ function renderVisible(): void {
   const start = Math.max(0, Math.floor(clamped / ROW_H) - BUFFER);
   const end = Math.min(total, Math.ceil((clamped + viewH) / ROW_H) + BUFFER);
 
-  if (start === lastStart && end === lastEnd) return;
-  lastStart = start;
-  lastEnd = end;
+  // skip if range barely changed (saves DOM churn on small scrolls)
+  if (
+    start === lastRangeStart &&
+    end === lastRangeEnd &&
+    scrollTop === lastScrollTop
+  ) {
+    return;
+  }
 
+  // only re-render if range shifted meaningfully or filter changed
+  const rangeShifted =
+    Math.abs(start - lastRangeStart) > 2 || Math.abs(end - lastRangeEnd) > 2;
+
+  lastScrollTop = scrollTop;
+
+  if (!rangeShifted) return;
+
+  lastRangeStart = start;
+  lastRangeEnd = end;
+
+  // spacer paddings
   list.style.paddingTop = `${start * ROW_H}px`;
   list.style.paddingBottom = `${Math.max(0, (total - end) * ROW_H)}px`;
 
+  // return current live rows to pool (reuse DOM nodes)
+  while (list.firstChild) {
+    const li = list.firstChild as HTMLLIElement;
+    artObserver.unobserve(li);
+    releaseRow(li);
+  }
+
+  // render visible rows
   const curId = state.current?.id ?? null;
   const playing = !!state.playing;
   const frag = document.createDocumentFragment();
 
   for (let i = start; i < end; i++) {
-    frag.appendChild(makeRow(items[i], curId, playing));
+    const li = acquireRow();
+    renderRow(li, items[i], curId, playing);
+    frag.appendChild(li);
   }
 
-  list.replaceChildren(frag);
-  refreshIcons();
+  list.appendChild(frag);
+  requestAnimationFrame(() => refreshIcons());
 }
 
-function makeRow(t: Track, curId: number | null, playing: boolean): HTMLLIElement {
-  const li = document.createElement("li");
+function renderRow(
+  li: HTMLLIElement,
+  t: Track,
+  curId: number | null,
+  playing: boolean
+): void {
   li.className = "track in";
   li.dataset.id = String(t.id);
   if (t.id === curId) {
     li.classList.add("playing");
     if (!playing) li.classList.add("paused");
   }
+
   li.innerHTML = `
     <button class="play-btn" title="Play">${ICON_PLAY}</button>
     <img class="track-art hidden" alt="" draggable="false" loading="lazy" />
@@ -132,6 +203,7 @@ function makeRow(t: Track, curId: number | null, playing: boolean): HTMLLIElemen
       <button class="del-btn" title="Delete">${ICON_DEL}</button>
     </div>`;
 
+  // artwork
   const img = li.querySelector(".track-art") as HTMLImageElement;
   if (artCache.has(t.id)) {
     setArt(img, artCache.get(t.id)!);
@@ -139,10 +211,9 @@ function makeRow(t: Track, curId: number | null, playing: boolean): HTMLLIElemen
     trackRef.set(li, t);
     artObserver.observe(li);
   }
-
-  return li;
 }
 
+// ── artwork helpers ─────────────────────────────────────────────────
 function setArt(img: HTMLImageElement, src: string): void {
   if (img.dataset.bound !== "1") {
     img.dataset.bound = "1";
@@ -189,13 +260,16 @@ export async function refreshLibrary(): Promise<void> {
 }
 
 export function renderLibrary(): void {
-  lastStart = -1;
-  lastEnd = -1;
-  const items = shown();
+  invalidateFilter();
+  const items = getItems();
   empty.classList.toggle("hidden", items.length > 0 || downloads.size > 0);
   empty.textContent =
-    tracks.length === 0 ? "Nothing here yet. Drop a URL above." : "No matches.";
-  renderVisible();
+    tracks.length === 0
+      ? "Nothing here yet. Drop a URL above."
+      : "No matches.";
+  lastRangeStart = -1;
+  lastRangeEnd = -1;
+  flushRender();
 }
 
 let _lastPlayingId: number | null = null;
@@ -234,7 +308,7 @@ list.addEventListener("click", (e) => {
   const row = target.closest<HTMLElement>(".track");
   if (!row || !row.dataset.id) return;
   const id = Number(row.dataset.id);
-  const items = shown();
+  const items = getItems();
   const t = items.find((x) => x.id === id) ?? tracks.find((x) => x.id === id);
   if (!t) return;
 
@@ -272,7 +346,12 @@ async function toggleFav(t: Track): Promise<void> {
 // ── delete ──────────────────────────────────────────────────────────
 
 async function deleteTrack(t: Track): Promise<void> {
-  if (!(await confirmDialog(`Delete "${t.title}" from the library and disk?`, "Delete")))
+  if (
+    !(await confirmDialog(
+      `Delete "${t.title}" from the library and disk?`,
+      "Delete"
+    ))
+  )
     return;
   await invoke("remove_track", { id: t.id });
   await refreshLibrary();
@@ -305,7 +384,9 @@ async function loadMeta(t: Track): Promise<void> {
   box.innerHTML = "";
   let m: TrackMetaInfo | null;
   try {
-    m = await invoke<TrackMetaInfo | null>("get_track_meta", { trackId: t.id });
+    m = await invoke<TrackMetaInfo | null>("get_track_meta", {
+      trackId: t.id,
+    });
   } catch {
     m = null;
   }
@@ -314,35 +395,52 @@ async function loadMeta(t: Track): Promise<void> {
     return;
   }
   const bits = (b: number) => (b > 0 ? `${(b / 1000).toFixed(0)} kbps` : "—");
-  const sz = (s: number) => (s > 0 ? `${(s / 1024 / 1024).toFixed(1)} MB` : "—");
+  const sz = (s: number) =>
+    s > 0 ? `${(s / 1024 / 1024).toFixed(1)} MB` : "—";
   box.innerHTML = (
     [
       ["Format", m.format || "—"],
       ["Codec", m.codec || "—"],
       ["Bitrate", bits(m.bitrate)],
-      ["Sample rate", m.sample_rate > 0 ? `${m.sample_rate} Hz` : "—"],
+      [
+        "Sample rate",
+        m.sample_rate > 0 ? `${m.sample_rate} Hz` : "—",
+      ],
       ["Channels", m.channels > 0 ? String(m.channels) : "—"],
       ["Duration", m.duration > 0 ? fmtDur(m.duration) : "—"],
       ["Size", sz(m.size)],
     ] as Array<[string, string]>
   )
-    .map(([k, v]) => `<div class="meta-row"><span>${k}</span><b>${esc(v)}</b></div>`)
+    .map(
+      ([k, v]) =>
+        `<div class="meta-row"><span>${k}</span><b>${esc(v)}</b></div>`
+    )
     .join("");
 }
 
-(document.getElementById("meta-cancel") as HTMLElement).addEventListener("click", () => {
+(
+  document.getElementById("meta-cancel") as HTMLElement
+).addEventListener("click", () => {
   sndClose();
-  (document.getElementById("meta-overlay") as HTMLElement).classList.remove("open");
+  (document.getElementById("meta-overlay") as HTMLElement).classList.remove(
+    "open"
+  );
 });
 
-(document.getElementById("meta-overlay") as HTMLElement).addEventListener("click", (e) => {
+(
+  document.getElementById("meta-overlay") as HTMLElement
+).addEventListener("click", (e) => {
   if (e.target === document.getElementById("meta-overlay")) {
     sndClose();
-    (document.getElementById("meta-overlay") as HTMLElement).classList.remove("open");
+    (document.getElementById("meta-overlay") as HTMLElement).classList.remove(
+      "open"
+    );
   }
 });
 
-(document.getElementById("meta-save") as HTMLElement).addEventListener("click", async () => {
+(
+  document.getElementById("meta-save") as HTMLElement
+).addEventListener("click", async () => {
   if (!metaTrack) return;
   await invoke("update_track_meta", {
     id: metaTrack.id,
@@ -351,14 +449,18 @@ async function loadMeta(t: Track): Promise<void> {
     album: val("#meta-album").trim(),
   });
   sndDone();
-  (document.getElementById("meta-overlay") as HTMLElement).classList.remove("open");
+  (document.getElementById("meta-overlay") as HTMLElement).classList.remove(
+    "open"
+  );
   await refreshLibrary();
 });
 
 // ── search / sort / favorites ───────────────────────────────────────
 
 let searchTimer: number | undefined;
-(document.getElementById("search") as HTMLInputElement).addEventListener("input", (e) => {
+(
+  document.getElementById("search") as HTMLInputElement
+).addEventListener("input", (e) => {
   clearTimeout(searchTimer);
   searchTimer = window.setTimeout(() => {
     setSearchTerm((e.target as HTMLInputElement).value.trim());
@@ -381,7 +483,9 @@ function updateSortBtn(): void {
   b.title = `Sort: ${b.textContent}`;
 }
 
-(document.getElementById("btn-sort") as HTMLElement).addEventListener("click", () => {
+(
+  document.getElementById("btn-sort") as HTMLElement
+).addEventListener("click", () => {
   sortIdx = (sortIdx + 1) % SORTS.length;
   setSortBy(SORTS[sortIdx][0]);
   updateSortBtn();
@@ -390,8 +494,13 @@ function updateSortBtn(): void {
 
 updateSortBtn();
 
-(document.getElementById("btn-fav") as HTMLElement).addEventListener("click", () => {
+(
+  document.getElementById("btn-fav") as HTMLElement
+).addEventListener("click", () => {
   setFavOnly(!favOnly);
-  (document.getElementById("btn-fav") as HTMLElement).classList.toggle("active", favOnly);
+  (document.getElementById("btn-fav") as HTMLElement).classList.toggle(
+    "active",
+    favOnly
+  );
   renderLibrary();
 });
