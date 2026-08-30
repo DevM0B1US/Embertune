@@ -1,6 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import {
   createIcons,
   Download,
@@ -181,12 +179,9 @@ export function fmtDur(s: number): string {
 }
 
 // --- icons ---
-export const ICON_PLAY = '<i data-lucide="Play" class="row-play-icon" width="13" height="13"></i>';
-export const ICON_DEL = '<i data-lucide="Trash2" width="14" height="14"></i>';
-export const ICON_EDIT = '<i data-lucide="Pencil" width="13" height="13"></i>';
-export const ICON_ADD = '<i data-lucide="Plus" width="13" height="13"></i>';
-export const ICON_HEART = (fav: boolean): string =>
-  `<i data-lucide="Heart" width="13" height="13"${fav ? ' fill="currentColor"' : ""}></i>`;
+// Note: list-row icons are pre-serialized SVG strings inside library.ts
+// (no lucide scanning per scroll frame). createIcons is only used for
+// the static chrome that exists once at startup.
 
 // --- toast + notifications ---
 let toastTimer: number | undefined;

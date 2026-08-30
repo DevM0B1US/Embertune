@@ -13,12 +13,19 @@
   list-style: none;
 }
 
-.dl-row {
-  cursor: default;
+/* dl rows used to inherit the generic .track flex base — that base now
+   lives on the library's .trow wrapper, so give dl rows their own. */
+#dl-list .track {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
 }
 
-#downloads-panel .dl-row {
-  padding: 7px 4px;
+.dl-row {
+  cursor: default;
 }
 
 .dl-row .track-title {

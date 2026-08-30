@@ -187,49 +187,47 @@ function setSeekVis(pct: number): void {
   if (knob) knob.style.left = `${v}%`;
 }
 
+let lastFillPct = -1;
+let lastTimeLabel = "";
+
 function frameSeek(): void {
   frameRaf = 0;
   const now = Date.now();
   const st = seekTarget;
-  const seeking = st && now - st.at < 800;
+  const seeking = !!st && now - st.at < 800;
   const shouldRun = seeking || (state.playing && state.duration > 0);
-  if (!shouldRun) {
-    // idle: check again in 250ms instead of 16ms — saves 15fps+ when paused
-    frameRaf = window.setTimeout(frameSeek as unknown as TimerHandler, 250) as unknown as number;
-    return;
-  }
-  if (document.hidden) {
-    // hidden tab: throttle to 4fps
+  if (!shouldRun || document.hidden) {
+    // idle/hidden: check again in 250ms instead of 16ms — saves wakeups
     frameRaf = window.setTimeout(frameSeek as unknown as TimerHandler, 250) as unknown as number;
     return;
   }
   let target: number;
   if (seeking && st) {
     target = st.secs;
-  } else if (state.playing && state.duration > 0) {
+  } else {
     target = seekBase.pos + ((now - seekBase.at) / 1000) * state.speed;
     if (target > state.duration) target = state.duration;
-  } else {
-    target = state.duration > 0 ? state.position : 0;
   }
   if (state.duration > 0) {
     // faster lerp when seeking, smoother when playing
     const lerp = seeking ? 0.5 : 0.3;
     visualPos += (target - visualPos) * lerp;
-    // skip DOM write if delta < 0.05% to avoid sub-pixel churn
     const pct = (visualPos / state.duration) * 100;
-    if (Math.abs(pct - parseFloat((document.getElementById("seek-fill") as HTMLElement)?.style.transform.match(/scaleX\(([^)]+)\)/)?.[1] || "0") * 100) > 0.05) {
-      setSeekVis(pct);
-    } else {
-      // still need to set if never set
+    // skip DOM writes when the change is sub-pixel
+    if (Math.abs(pct - lastFillPct) > 0.05) {
+      lastFillPct = pct;
       setSeekVis(pct);
     }
     const seek = document.getElementById("seek") as HTMLInputElement | null;
     if (seek && document.activeElement !== seek) {
-      seek.value = String(Math.min(1000, (visualPos / state.duration) * 1000));
+      seek.value = String(Math.min(1000, (pct / 100) * 1000));
     }
-    const curEl = document.getElementById("time-cur");
-    if (curEl) curEl.textContent = fmtDur(seeking ? st!.secs : visualPos);
+    const label = fmtDur(seeking && st ? st.secs : visualPos);
+    if (label !== lastTimeLabel) {
+      lastTimeLabel = label;
+      const curEl = document.getElementById("time-cur");
+      if (curEl) curEl.textContent = label;
+    }
   }
   frameRaf = requestAnimationFrame(frameSeek);
 }
@@ -279,6 +277,7 @@ $("#btn-repeat").addEventListener("click", () => {
 function updateRepeatBtn(): void {
   const b = $("#btn-repeat");
   const mode = state.repeat || "off";
+  if (b.dataset.mode === mode) return; // poll runs 2×/s — don't rewrite
   b.dataset.mode = mode;
   b.classList.toggle("active", mode !== "off");
   b.title = mode === "one" ? "Repeat: one" : mode === "all" ? "Repeat: all" : "Repeat: off";
@@ -294,9 +293,12 @@ $("#btn-speed").addEventListener("click", () => {
   updateSpeedBtn();
 });
 
+let lastSpeedLabel = "";
 function updateSpeedBtn(): void {
   const v = state.speed || 1.0;
   const label = Number.isInteger(v) ? `${v}.0×` : `${v}×`;
+  if (label === lastSpeedLabel) return; // poll runs 2×/s — don't rewrite
+  lastSpeedLabel = label;
   $("#btn-speed").textContent = label;
 }
 
@@ -391,9 +393,6 @@ if (btnSleep && sleepPop) {
       stopSleepRing();
     }
   });
-  console.log("[sleep] btn-sleep listener attached");
-} else {
-  console.error("[sleep] btn or pop not found", !!btnSleep, !!sleepPop);
 }
 (document.getElementById("sleep-close") as HTMLElement | null)?.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -426,9 +425,13 @@ document.addEventListener("click", (e) => {
 });
 
 // keyboard shortcuts
+// (skip when a button/select is focused — Space/Enter must activate the
+// focused control natively instead of double-firing app shortcuts)
 document.addEventListener("keydown", (e) => {
-  const tag = (e.target as HTMLElement).tagName;
+  const el = e.target as HTMLElement;
+  const tag = el.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (el.closest?.("button, [role='button'], a")) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   switch (e.key) {
     case " ":
@@ -538,7 +541,10 @@ export async function pollPlayer(): Promise<void> {
   // marquee — only when text actually changed (applyMarquee already bails)
   if (els.nowTitle) applyMarquee(els.nowTitle, state.current ? state.current.title : "—");
   if (els.nowArtist) applyMarquee(els.nowArtist, state.current && state.current.artist ? state.current.artist : "");
-  if (els.timeTotal) els.timeTotal.textContent = fmtDur(state.duration);
+  if (els.timeTotal) {
+    const tt = fmtDur(state.duration);
+    if (els.timeTotal.textContent !== tt) els.timeTotal.textContent = tt;
+  }
   updateRepeatBtn();
   updateSpeedBtn();
   if (els.btnShuffle) els.btnShuffle.classList.toggle("active", !!state.shuffle);

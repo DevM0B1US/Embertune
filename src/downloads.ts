@@ -10,7 +10,7 @@ import {
   downloads,
   dlRate,
 } from "./lib";
-import { renderLibrary, refreshLibrary } from "./library";
+import { refreshLibrary } from "./library";
 import type { JobView } from "./lib";
 
 // --- add url ---
@@ -75,7 +75,35 @@ function dlStatusText(j: JobView): string {
 
 let dlIconsRaf = 0;
 let lastDlIcons = 0;
+
+// Progress events arrive several times per second per job; rebuilding
+// the panel on every event is wasted work. Coalesce to ~8fps — the
+// .dl-fill width transition smooths the bars between renders.
+let lastRenderAt = 0;
+let pendingTimer: number | undefined;
+
+function scheduleRender(): void {
+  const now = performance.now();
+  const dt = now - lastRenderAt;
+  if (dt >= 120) {
+    lastRenderAt = now;
+    renderDownloadsNow();
+    return;
+  }
+  if (pendingTimer === undefined) {
+    pendingTimer = window.setTimeout(() => {
+      pendingTimer = undefined;
+      lastRenderAt = performance.now();
+      renderDownloadsNow();
+    }, 120 - dt);
+  }
+}
+
 export function renderDownloads(): void {
+  scheduleRender();
+}
+
+function renderDownloadsNow(): void {
   const singles = [...downloads.values()];
   const panel = document.getElementById("downloads-panel") as HTMLElement;
   panel.classList.toggle("hidden", singles.length === 0);
@@ -158,7 +186,6 @@ function addUrls(): void {
   for (const u of urls) void queueUrl(u);
   setVal("#url-input", "");
   autoGrow($("#url-input"));
-  renderLibrary();
   toast(
     urls.length === 1
       ? "Added to queue — downloading…"

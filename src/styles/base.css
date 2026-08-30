@@ -14,6 +14,7 @@
   --border: #33373e;
   --border-soft: #282c32;
   --radius: 10px;
+  --row-h: 56px; /* library row height — mirrored as ROW_H in library.ts */
   --font-ui: "Inter", "Lato", "Cantarell", system-ui, sans-serif;
   --mono: "Noto Sans Mono", "DejaVu Sans Mono", ui-monospace, "SF Mono",
     Menlo, Consolas, monospace;

@@ -12,8 +12,9 @@ import {
   state,
   setLyricsFs,
   closeMenus,
+  closeSettings,
 } from "./lib";
-import { renderLibrary, refreshLibrary } from "./library";
+import { refreshLibrary } from "./library";
 import { renderDownloads } from "./downloads";
 import { loadLyrics, updateLyrics, pollPlayer, loadSettings } from "./player";
 import type { JobView } from "./lib";
@@ -92,6 +93,20 @@ document.addEventListener("click", (e) => {
   closeMenus();
 });
 
+// Escape closes whatever overlay is on top (lyrics-fs has its own handler)
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if ($("#settings-overlay").classList.contains("open")) {
+    closeSettings();
+    return;
+  }
+  const meta = $("#meta-overlay");
+  if (meta.classList.contains("open")) {
+    meta.classList.remove("open");
+    sndClose();
+  }
+});
+
 // --- events ---
 void listen("download-progress", (e) => {
   const j = e.payload as JobView;
@@ -134,8 +149,7 @@ void (async () => {
     for (const j of jobs) {
       downloads.set(j.id, j);
     }
-    renderDownloads();
-    renderLibrary();
+    renderDownloads(); // refreshLibrary already rendered the list
   } catch {
     /* no downloads backend */
   }
