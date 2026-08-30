@@ -292,10 +292,11 @@
 .view {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: 0;
   -webkit-overflow-scrolling: touch;
   scrollbar-gutter: stable;
   will-change: scroll-position;
+  scroll-behavior: smooth;
 }
 
 .hidden {

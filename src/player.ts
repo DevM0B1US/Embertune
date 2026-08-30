@@ -417,7 +417,7 @@ $("#sleep-custom-input").addEventListener("keydown", (e) => {
   if ((e as KeyboardEvent).key === "Enter") ($("#sleep-custom-set") as HTMLElement).click();
 });
 document.addEventListener("click", (e) => {
-  if (!sleepPop.classList.contains("open")) return;
+  if (!sleepPop || !sleepPop.classList.contains("open")) return;
   const t = e.target as HTMLElement;
   if (!sleepPop.contains(t) && !$("#btn-sleep").contains(t)) {
     sleepPop.classList.remove("open");
