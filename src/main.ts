@@ -11,13 +11,11 @@ import {
   downloads,
   state,
   setLyricsFs,
-  instantClose,
   closeMenus,
 } from "./lib";
 import { renderLibrary, refreshLibrary } from "./library";
 import { renderDownloads } from "./downloads";
 import { loadLyrics, updateLyrics, pollPlayer, loadSettings } from "./player";
-import { initEqualizer } from "./equalizer";
 import type { JobView } from "./lib";
 
 // --- drawers / menus ---
@@ -28,7 +26,6 @@ $("#btn-lyrics").addEventListener("click", () => {
   else sndClose();
   $("#btn-lyrics").classList.toggle("active", open);
   if (open) {
-    instantClose($("#eq-panel"), $("#btn-eq"));
     loadLyrics();
   }
 });
@@ -89,11 +86,7 @@ document.addEventListener("keydown", (e) => {
 
 document.addEventListener("click", (e) => {
   const t = e.target as HTMLElement;
-  if (
-    t.closest(
-      "#lyrics-panel, #btn-lyrics, #eq-panel, #btn-eq"
-    )
-  ) {
+  if (t.closest("#lyrics-panel, #btn-lyrics")) {
     return;
   }
   closeMenus();
@@ -117,7 +110,9 @@ void listen("library-changed", () => {
 });
 
 void listen("engines-updated", (e) => {
-  $("#engine-log").textContent = String(e.payload);
+  const log = $("#engine-log");
+  log.textContent = String(e.payload);
+  log.classList.remove("hidden");
 });
 
 // --- init ---
@@ -131,7 +126,6 @@ document.addEventListener("click", (e) => {
 });
 
 refreshIcons();
-initEqualizer();
 void refreshLibrary();
 void loadSettings();
 void (async () => {
@@ -146,4 +140,16 @@ void (async () => {
     /* no downloads backend */
   }
 })();
-setInterval(() => void pollPlayer(), 500);
+// adaptive poll: 500ms when playing, 1000ms when paused/hidden — saves IPC + wakeups
+let pollTimer: number | undefined;
+function schedulePoll() {
+  const delay = document.hidden ? 1000 : state.playing ? 500 : 900;
+  pollTimer = window.setTimeout(async () => {
+    await pollPlayer();
+    schedulePoll();
+  }, delay);
+}
+schedulePoll();
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) void pollPlayer();
+});

@@ -172,22 +172,37 @@ $("#lyrics-text").addEventListener("scroll", () => {
   if (performance.now() - lrcLastAuto > 50) cancelAnimationFrame(lrcScrollRaf);
 });
 
-// --- transport ---
+// --- transport — adaptive rAF: only 60fps when playing or seeking ---
 let seekTarget: SeekTarget | null = null;
 let seekBase = { pos: 0, at: 0 };
 let visualPos = 0;
+let frameRaf = 0;
 
 function setSeekVis(pct: number): void {
   const v = Math.max(0, Math.min(100, pct));
-  $("#seek-fill").style.transform = `scaleX(${v / 100})`;
-  $("#seek-knob").style.left = `${v}%`;
+  // use transform only — no layout thrash
+  const fill = document.getElementById("seek-fill") as HTMLElement;
+  const knob = document.getElementById("seek-knob") as HTMLElement;
+  if (fill) fill.style.transform = `scaleX(${v / 100})`;
+  if (knob) knob.style.left = `${v}%`;
 }
 
-// rAF loop: interpolate the playhead between 500ms polls for buttery motion.
 function frameSeek(): void {
+  frameRaf = 0;
   const now = Date.now();
   const st = seekTarget;
   const seeking = st && now - st.at < 800;
+  const shouldRun = seeking || (state.playing && state.duration > 0);
+  if (!shouldRun) {
+    // idle: check again in 250ms instead of 16ms — saves 15fps+ when paused
+    frameRaf = window.setTimeout(frameSeek as unknown as TimerHandler, 250) as unknown as number;
+    return;
+  }
+  if (document.hidden) {
+    // hidden tab: throttle to 4fps
+    frameRaf = window.setTimeout(frameSeek as unknown as TimerHandler, 250) as unknown as number;
+    return;
+  }
   let target: number;
   if (seeking && st) {
     target = st.secs;
@@ -198,18 +213,30 @@ function frameSeek(): void {
     target = state.duration > 0 ? state.position : 0;
   }
   if (state.duration > 0) {
-    visualPos += (target - visualPos) * 0.3;
+    // faster lerp when seeking, smoother when playing
+    const lerp = seeking ? 0.5 : 0.3;
+    visualPos += (target - visualPos) * lerp;
+    // skip DOM write if delta < 0.05% to avoid sub-pixel churn
     const pct = (visualPos / state.duration) * 100;
-    setSeekVis(pct);
-    const seek = $("#seek") as HTMLInputElement;
-    if (document.activeElement !== seek) {
+    if (Math.abs(pct - parseFloat((document.getElementById("seek-fill") as HTMLElement)?.style.transform.match(/scaleX\(([^)]+)\)/)?.[1] || "0") * 100) > 0.05) {
+      setSeekVis(pct);
+    } else {
+      // still need to set if never set
+      setSeekVis(pct);
+    }
+    const seek = document.getElementById("seek") as HTMLInputElement | null;
+    if (seek && document.activeElement !== seek) {
       seek.value = String(Math.min(1000, (visualPos / state.duration) * 1000));
     }
-    $("#time-cur").textContent = fmtDur(seeking ? st!.secs : visualPos);
+    const curEl = document.getElementById("time-cur");
+    if (curEl) curEl.textContent = fmtDur(seeking ? st!.secs : visualPos);
   }
-  requestAnimationFrame(frameSeek);
+  frameRaf = requestAnimationFrame(frameSeek);
 }
-requestAnimationFrame(frameSeek);
+function kickFrameSeek(): void {
+  if (!frameRaf) frameRaf = requestAnimationFrame(frameSeek);
+}
+frameRaf = requestAnimationFrame(frameSeek);
 
 $("#btn-play").addEventListener("click", () => void invoke("toggle_play"));
 $("#btn-next").addEventListener("click", () => void invoke("player_next"));
@@ -411,23 +438,58 @@ window.addEventListener("resize", () => {
   }
 });
 
+let pollCache: { btnPlay: HTMLElement | null; playerEl: HTMLElement | null; nowTitle: HTMLElement | null; nowArtist: HTMLElement | null; timeTotal: HTMLElement | null; btnShuffle: HTMLElement | null; seek: HTMLInputElement | null; vol: HTMLInputElement | null } | null = null;
+function getPollEls() {
+  if (pollCache) return pollCache;
+  pollCache = {
+    btnPlay: document.getElementById("btn-play"),
+    playerEl: document.getElementById("player"),
+    nowTitle: document.getElementById("now-title"),
+    nowArtist: document.getElementById("now-artist"),
+    timeTotal: document.getElementById("time-total"),
+    btnShuffle: document.getElementById("btn-shuffle"),
+    seek: document.getElementById("seek") as HTMLInputElement | null,
+    vol: document.getElementById("volume") as HTMLInputElement | null,
+  };
+  return pollCache;
+}
+let lastPollStatePlaying = false;
 export async function pollPlayer(): Promise<void> {
+  // throttle hidden tab to 1s to save IPC + wakeups
+  if (document.hidden) {
+    // still need to poll occasionally for sleep timer, but slower
+    const now = Date.now();
+    // @ts-ignore
+    if ((pollPlayer as any)._lastHidden && now - (pollPlayer as any)._lastHidden < 1000) return;
+    (pollPlayer as any)._lastHidden = now;
+  }
   try {
     Object.assign(state, await invoke<PlayerState>("get_player_state"));
   } catch {
     return;
   }
-  $("#btn-play").querySelector(".icon-play")!.classList.toggle("hidden", state.playing);
-  $("#btn-play").querySelector(".icon-pause")!.classList.toggle("hidden", !state.playing);
-  $("#player").classList.toggle("playing", state.playing);
-  applyMarquee($("#now-title"), state.current ? state.current.title : "—");
-  applyMarquee($("#now-artist"), state.current && state.current.artist ? state.current.artist : "");
-  $("#time-total").textContent = fmtDur(state.duration);
+  const els = getPollEls();
+  if (els.btnPlay) {
+    const ip = els.btnPlay.querySelector(".icon-play") as HTMLElement | null;
+    const ap = els.btnPlay.querySelector(".icon-pause") as HTMLElement | null;
+    if (ip) ip.classList.toggle("hidden", state.playing);
+    if (ap) ap.classList.toggle("hidden", !state.playing);
+  }
+  if (els.playerEl) els.playerEl.classList.toggle("playing", state.playing);
+  // marquee — only when text actually changed (applyMarquee already bails)
+  if (els.nowTitle) applyMarquee(els.nowTitle, state.current ? state.current.title : "—");
+  if (els.nowArtist) applyMarquee(els.nowArtist, state.current && state.current.artist ? state.current.artist : "");
+  if (els.timeTotal) els.timeTotal.textContent = fmtDur(state.duration);
   updateRepeatBtn();
   updateSpeedBtn();
-  $("#btn-shuffle").classList.toggle("active", !!state.shuffle);
+  if (els.btnShuffle) els.btnShuffle.classList.toggle("active", !!state.shuffle);
   updateSleepBtn();
   markPlayingRow();
+  // kick/pause frameSeek based on playing transition
+  if (state.playing !== lastPollStatePlaying) {
+    lastPollStatePlaying = state.playing;
+    kickFrameSeek();
+  }
 
   if (state.current && state.current.id !== lastNowId) {
     setLastNowId(state.current.id);
@@ -451,13 +513,13 @@ export async function pollPlayer(): Promise<void> {
     visualPos = state.position;
   }
   if (!seeking) {
-    const seek = $("#seek") as HTMLInputElement;
-    if (document.activeElement !== seek && state.duration > 0) {
+    const seek = els.seek;
+    if (seek && document.activeElement !== seek && state.duration > 0) {
       seek.value = String(Math.min(1000, (state.position / state.duration) * 1000));
     }
   }
-  const vol = $("#volume") as HTMLInputElement;
-  if (document.activeElement !== vol) vol.value = String(state.volume);
+  const vol = els.vol;
+  if (vol && document.activeElement !== vol) vol.value = String(state.volume);
 }
 
 async function loadNowArt(): Promise<void> {
@@ -476,6 +538,10 @@ async function loadNowArt(): Promise<void> {
   try {
     const p = await invoke<string | null>("get_art", { trackId: t.id });
     if (p) {
+      if (artCache.size >= 120) {
+        const first = artCache.keys().next().value;
+        if (first !== undefined) artCache.delete(first as number);
+      }
       artCache.set(t.id, p);
       setNowArt(p, img, fallback);
     } else {
@@ -579,17 +645,21 @@ $("#save-creds").addEventListener("click", () => {
   });
 });
 
-// --- UI sounds toggle ---
-const sndEl = $("#snd-toggle") as HTMLButtonElement;
-sndEl.setAttribute("aria-checked", String(sndEnabled));
-sndEl.addEventListener("click", () => {
-  setSndEnabled(sndEl.getAttribute("aria-checked") !== "true");
+// --- UI sounds toggle (hidden from settings — keep sounds on, respect localStorage) ---
+const sndEl = document.getElementById("snd-toggle") as HTMLButtonElement | null;
+if (sndEl) {
   sndEl.setAttribute("aria-checked", String(sndEnabled));
-  localStorage.setItem("embertune.sound", sndEnabled ? "on" : "off");
-  if (sndEnabled) sndClick();
-});
+  sndEl.addEventListener("click", () => {
+    setSndEnabled(sndEl.getAttribute("aria-checked") !== "true");
+    sndEl.setAttribute("aria-checked", String(sndEnabled));
+    localStorage.setItem("embertune.sound", sndEnabled ? "on" : "off");
+    if (sndEnabled) sndClick();
+  });
+}
 
 $("#update-engines").addEventListener("click", () => {
-  $("#engine-log").textContent = "Updating…";
+  const log = $("#engine-log");
+  log.textContent = "Updating…";
+  log.classList.remove("hidden");
   void invoke("update_engines");
 });

@@ -49,6 +49,14 @@ impl Db {
             );",
         )?;
         let _ = conn.execute_batch("ALTER TABLE tracks ADD COLUMN favorite INTEGER DEFAULT 0");
+        // hot-path indexes — speed ORDER BY added_at, lookups by path, favorites filter
+        let _ = conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_tracks_added_at ON tracks(added_at DESC);
+             CREATE INDEX IF NOT EXISTS idx_tracks_path ON tracks(path);
+             CREATE INDEX IF NOT EXISTS idx_tracks_favorite ON tracks(favorite);",
+        );
+        // WAL mode for concurrent read/write, synchronous NORMAL for speed
+        let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         Ok(Db {
             conn: Mutex::new(conn),
         })

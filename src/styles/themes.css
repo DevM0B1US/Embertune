@@ -159,7 +159,7 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
     padding: 10px 12px;
   }
   .settings-modal {
-    width: min(620px, calc(100vw - 40px));
+    width: min(880px, calc(100vw - 32px));
   }
 }
 

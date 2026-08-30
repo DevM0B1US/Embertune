@@ -16,8 +16,6 @@ pub struct Settings {
     pub theme: String,
     pub fade_enabled: bool,
     pub fade_duration: f64,
-    #[serde(default)]
-    pub eq_bands: Vec<f64>,
     pub sound_effect: String,
     pub window_controls: bool,
 }
@@ -36,7 +34,6 @@ impl Default for Settings {
             theme: "glass".into(),
             fade_enabled: false,
             fade_duration: 2.0,
-            eq_bands: vec![0.0; 10],
             sound_effect: "off".into(),
             window_controls: false,
         }
@@ -147,12 +144,6 @@ impl SettingsStore {
         if duration > 0.0 {
             d.fade_duration = duration;
         }
-        self.persist(&d);
-    }
-
-    pub fn set_eq_bands(&self, bands: Vec<f64>) {
-        let mut d = self.data.lock().unwrap();
-        d.eq_bands = bands;
         self.persist(&d);
     }
 

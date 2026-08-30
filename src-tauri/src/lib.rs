@@ -305,7 +305,6 @@ struct SettingsView {
     theme: String,
     fade_enabled: bool,
     fade_duration: f64,
-    eq_bands: Vec<f64>,
     sound_effect: String,
     window_controls: bool,
 }
@@ -326,7 +325,6 @@ fn get_settings(s: State<Arc<settings::SettingsStore>>) -> SettingsView {
         theme: inner.theme,
         fade_enabled: inner.fade_enabled,
         fade_duration: inner.fade_duration,
-        eq_bands: inner.eq_bands,
         sound_effect: inner.sound_effect,
         window_controls: inner.window_controls,
     }
@@ -514,16 +512,6 @@ fn set_repeat(p: State<Player>, mode: String) {
 #[tauri::command]
 fn set_speed(p: State<Player>, speed: f64) {
     p.set_speed(speed);
-}
-
-#[tauri::command]
-fn set_equalizer(p: State<Player>, preset: String) {
-    p.set_equalizer(preset);
-}
-
-#[tauri::command]
-fn set_eq_bands(p: State<Player>, bands: Vec<f64>) {
-    p.set_eq_bands(bands);
 }
 
 #[tauri::command]
@@ -754,17 +742,28 @@ pub fn run() {
                 let app = app.handle().clone();
                 std::thread::spawn(move || {
                     if let Ok(tracks) = db.get_tracks() {
-                        for t in tracks {
-                            if t.duration <= 0 {
-                                let d = probe_duration(&t.path);
-                                if d > 0 {
-                                    let _ = db.update_duration(t.id, d);
+                        // parallelize probes — 4 workers, chunked
+                        let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(6).max(2);
+                        let chunk = (tracks.len() + n - 1) / n;
+                        let mut handles = Vec::new();
+                        for part in tracks.chunks(chunk.max(1)) {
+                            let dbc = db.clone();
+                            let part = part.to_vec();
+                            handles.push(std::thread::spawn(move || {
+                                for t in part {
+                                    if t.duration <= 0 {
+                                        let d = probe_duration(&t.path);
+                                        if d > 0 {
+                                            let _ = dbc.update_duration(t.id, d);
+                                        }
+                                    }
+                                    if !art::art_file_exists(&t.path) {
+                                        let _ = art::extract_cover(&t.path);
+                                    }
                                 }
-                            }
-                            if !art::art_file_exists(&t.path) {
-                                let _ = art::extract_cover(&t.path);
-                            }
+                            }));
                         }
+                        for h in handles { let _ = h.join(); }
                     }
                     let _ = app.emit("library-changed", 0);
                 });
@@ -830,8 +829,6 @@ pub fn run() {
             set_repeat,
             set_speed,
             set_sleep_timer,
-            set_equalizer,
-            set_eq_bands,
             set_fade,
             set_effect,
             set_window_controls,

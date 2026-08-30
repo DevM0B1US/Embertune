@@ -33,6 +33,11 @@ function fmtBytes(n: number): string {
 
 function speedFor(id: number, downloaded: number, status: string): string {
   if (status !== "downloading" || downloaded <= 0) return "";
+  // prune stale entries (keep map small)
+  if (dlRate.size > 40) {
+    const now2 = performance.now();
+    for (const [k, v] of dlRate) if (now2 - v.t > 60000) dlRate.delete(k);
+  }
   const now = performance.now();
   const prev = dlRate.get(id);
   let rate: number;
@@ -68,14 +73,27 @@ function dlStatusText(j: JobView): string {
   }
 }
 
+let dlIconsRaf = 0;
+let lastDlIcons = 0;
 export function renderDownloads(): void {
   const singles = [...downloads.values()];
-  const panel = $("#downloads-panel");
+  const panel = document.getElementById("downloads-panel") as HTMLElement;
   panel.classList.toggle("hidden", singles.length === 0);
-  const list = $("#dl-list");
-  list.innerHTML = "";
-  for (const j of singles) list.appendChild(buildSingleRow(j));
-  refreshIcons();
+  const list = document.getElementById("dl-list") as HTMLElement;
+  // single document fragment — avoids N layout thrashes
+  const frag = document.createDocumentFragment();
+  for (const j of singles) frag.appendChild(buildSingleRow(j));
+  list.replaceChildren(frag);
+  // throttle icon refresh to 150ms
+  const now = performance.now();
+  if (now - lastDlIcons < 150) {
+    if (!dlIconsRaf) dlIconsRaf = requestAnimationFrame(() => { dlIconsRaf = 0; lastDlIcons = performance.now(); refreshIcons(); });
+    return;
+  }
+  lastDlIcons = now;
+  requestAnimationFrame(() => refreshIcons());
+  // cleanup dlRate for finished jobs
+  for (const [id] of dlRate) if (!singles.some((j) => j.id === id)) dlRate.delete(id);
 }
 
 function buildSingleRow(j: JobView): HTMLLIElement {

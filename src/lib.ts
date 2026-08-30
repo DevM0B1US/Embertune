@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import {
   createIcons,
+  Download,
   Folder,
   Heart,
   ListMusic,
@@ -11,6 +12,7 @@ import {
   Minimize,
   Minus,
   Music2,
+  Palette,
   Pause,
   Pencil,
   Play,
@@ -21,13 +23,14 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
-  SlidersHorizontal,
   Timer,
   Trash2,
+  Wrench,
   X,
 } from "lucide";
 
 export const ICONS = {
+  Download,
   Folder,
   Heart,
   ListMusic,
@@ -36,6 +39,7 @@ export const ICONS = {
   Minimize,
   Minus,
   Music2,
+  Palette,
   Pause,
   Pencil,
   Play,
@@ -46,9 +50,9 @@ export const ICONS = {
   Shuffle,
   SkipBack,
   SkipForward,
-  SlidersHorizontal,
   Timer,
   Trash2,
+  Wrench,
   X,
 };
 
@@ -354,9 +358,7 @@ $("#prompt-overlay").addEventListener("click", (e) => {
 // --- drawers / menus ---
 export function closeMenus(): void {
   $("#lyrics-panel").classList.remove("open");
-  $("#eq-panel").classList.remove("open");
   $("#btn-lyrics").classList.remove("active");
-  $("#btn-eq").classList.remove("active");
 }
 
 // Close a drawer without its slide-out animation so two panels are never

@@ -175,20 +175,35 @@ impl Player {
             }
         });
 
-        // Crossfade: a small poller ramps the volume down near the end of a
-        // track and back up at the start of the next. One mpv instance, one
-        // thread, ~80ms tick — negligible cost, no extra decode. Disabled until
-        // the user flips the setting on.
+        // Crossfade: adaptive poller — 80ms only when fade enabled, else 500ms and no IPC
         let fade_conn = conn_holder.clone();
         let fade_settings = settings.clone();
         std::thread::spawn(move || {
             let mut base = 100.0f64;
             let mut vol_cur = 100.0f64;
             loop {
+                // check settings without cloning full struct when disabled
+                let (fade, fd) = {
+                    let s = fade_settings.get();
+                    (s.fade_enabled, if s.fade_duration > 0.0 { s.fade_duration } else { 0.0 })
+                };
+                if !fade || fd <= 0.0 {
+                    // disabled: sleep longer and adopt volume without IPC storm
+                    std::thread::sleep(Duration::from_millis(500));
+                    // still adopt volume base occasionally but with single IPC per wake
+                    let v = fade_conn
+                        .lock()
+                        .unwrap()
+                        .as_mut()
+                        .and_then(|c| c.get_f64("volume").ok().flatten())
+                        .unwrap_or(base);
+                    if v != vol_cur {
+                        base = v;
+                        vol_cur = v;
+                    }
+                    continue;
+                }
                 std::thread::sleep(Duration::from_millis(80));
-                let s = fade_settings.get();
-                let fade = s.fade_enabled;
-                let fd = if s.fade_duration > 0.0 { s.fade_duration } else { 0.0 };
                 let mut target: Option<f64> = None;
                 let mut in_zone = false;
                 {
@@ -197,15 +212,13 @@ impl Player {
                         let paused = c.get_bool("pause").unwrap_or(true);
                         let pos = c.get_f64("time-pos").ok().flatten().unwrap_or(0.0);
                         let dur = c.get_f64("duration").ok().flatten().unwrap_or(0.0);
-                        if !paused && fade && fd > 0.0 && dur > 0.0 {
+                        if !paused && dur > 0.0 {
                             if pos < fd {
-                                // fade-in at the start of a track
                                 in_zone = true;
                                 target = Some(base * (pos / fd));
                             } else {
                                 let remaining = dur - pos;
                                 if remaining <= fd && remaining >= -0.5 {
-                                    // fade-out before the next track takes over
                                     in_zone = true;
                                     target = Some(base * (remaining / fd).clamp(0.0, 1.0));
                                 }
@@ -225,8 +238,6 @@ impl Player {
                         }
                     }
                 } else {
-                    // outside fade zones adopt mpv's current volume as the base,
-                    // so the user's volume slider is never fought
                     let v = fade_conn
                         .lock()
                         .unwrap()
@@ -354,16 +365,6 @@ impl Player {
         });
     }
 
-    pub fn set_equalizer(&self, preset: String) {
-        self.settings.set_eq_bands(eq_preset_bands(&preset));
-        self.rebuild_af();
-    }
-
-    pub fn set_eq_bands(&self, bands: Vec<f64>) {
-        self.settings.set_eq_bands(bands);
-        self.rebuild_af();
-    }
-
     pub fn set_effect(&self, effect: String) {
         self.settings.set_effect(Some(effect));
         self.rebuild_af();
@@ -433,48 +434,16 @@ impl Drop for Player {
     }
 }
 
-/// 10 graphic-EQ bands (Hz), in order — must match the frontend panel.
-pub const EQ_FREQS: [f64; 10] = [
-    31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
-];
-
-/// Quick-set preset curves (dB per band, matching `EQ_FREQS`).
-pub fn eq_preset_bands(preset: &str) -> Vec<f64> {
-    match preset {
-        "bass" => vec![7.0, 5.0, 3.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        "treble" => vec![0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 4.0, 6.0, 6.0, 6.0],
-        "pop" => vec![-2.0, -1.0, 1.0, 2.0, 3.0, 3.0, 4.0, 4.0, 3.0, 2.0],
-        "rock" => vec![5.0, 4.0, 3.0, 2.0, 1.0, 2.0, 3.0, 4.0, 4.0, 3.0],
-        "vocal" => vec![1.0, 2.0, 3.0, 3.0, 4.0, 5.0, 4.0, 3.0, 2.0, 1.0],
-        _ => vec![0.0; 10],
-    }
-}
-
-fn eq_filter(bands: &[f64]) -> String {
-    if bands.len() != EQ_FREQS.len() {
-        return String::new();
-    }
-    bands
-        .iter()
-        .enumerate()
-        .filter(|(_, g)| g.abs() > 0.05)
-        .map(|(i, g)| format!("equalizer=f={}:t=q:w=1:g={:.1}", EQ_FREQS[i], g))
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
 fn af_from_settings(s: &Settings) -> String {
-    let eq = eq_filter(&s.eq_bands);
-    let fx = match s.sound_effect.as_str() {
-        "echo" => "aecho=0.6:0.6:250:0.4",
-        "reverb" => "lavfi=[aecho=0.8:0.9:500|1000|1500|2000:0.4|0.3|0.2|0.1]",
-        "tremolo" => "tremolo=5:0.5",
-        "vibrato" => "vibrato=5:0.5",
-        "phaser" => "aphaser=0.9:0.6:2:0.4:1",
-        "chorus" => "lavfi=[chorus=0.6:0.9:50|60|40:0.4|0.32|0.3:0.25|0.4|0.3:2|2.3|1.3]",
-        _ => "",
-    };
-    vec![eq, fx.to_string()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<String>>().join(",")
+    match s.sound_effect.as_str() {
+        "echo" => "aecho=0.6:0.6:250:0.4".to_string(),
+        "reverb" => "lavfi=[aecho=0.8:0.9:500|1000|1500|2000:0.4|0.3|0.2|0.1]".to_string(),
+        "tremolo" => "tremolo=5:0.5".to_string(),
+        "vibrato" => "vibrato=5:0.5".to_string(),
+        "phaser" => "aphaser=0.9:0.6:2:0.4:1".to_string(),
+        "chorus" => "lavfi=[chorus=0.6:0.9:50|60|40:0.4|0.32|0.3:0.25|0.4|0.3:2|2.3|1.3]".to_string(),
+        _ => String::new(),
+    }
 }
 
 fn now_nanos() -> u64 {
