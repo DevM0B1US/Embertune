@@ -53,7 +53,7 @@ const pool: HTMLLIElement[] = [];
 const trackRef = new WeakMap<HTMLElement, Track>();
 
 function acquireRow(): HTMLLIElement {
-  const li = pool.pop()!;
+  const li = pool.pop() ?? document.createElement("li");
   li.classList.add("in");
   return li;
 }
