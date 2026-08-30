@@ -27,60 +27,6 @@ import {
 import { markPlayingRow, playTrack } from "./library";
 import type { PlayerState, SeekTarget } from "./lib";
 
-// --- queue ---
-let dragFrom: number | null = null;
-
-export function renderQueue(): void {
-  const list = $("#queue-list");
-  list.innerHTML = "";
-  const q = state.queue || [];
-  $("#queue-empty").classList.toggle("hidden", q.length > 0);
-  const cur = state.current ? state.current.id : null;
-  q.forEach((t, i) => {
-    const li = document.createElement("li");
-    li.className = "queue-item" + (t.id === cur ? " current" : "");
-    li.draggable = true;
-    li.dataset.idx = String(i);
-    li.innerHTML = `
-      <span class="q-idx">${t.id === cur ? "▶" : i + 1}</span>
-      <div class="q-meta">
-        <div class="q-title">${esc(t.title)}</div>
-        <div class="q-sub">${esc(t.artist || "—")} · ${fmtDur(t.duration)}</div>
-      </div>
-    `;
-    li.addEventListener("click", () => {
-      const id = state.queue[i]?.id;
-      if (id) playTrack(id);
-    });
-    li.addEventListener("dragstart", () => {
-      dragFrom = i;
-      li.classList.add("dragging");
-    });
-    li.addEventListener("dragend", () => li.classList.remove("dragging"));
-    li.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      li.classList.add("over");
-    });
-    li.addEventListener("dragleave", () => li.classList.remove("over"));
-li.addEventListener("drop", (e) => {
-      e.preventDefault();
-      li.classList.remove("over");
-      if (dragFrom === null || dragFrom === i) return;
-      const from = dragFrom;
-      const to = i;
-      dragFrom = null;
-      void invoke("reorder_queue", { from, to });
-      const qq = state.queue.slice();
-      const [it] = qq.splice(from, 1);
-      qq.splice(to, 0, it!);
-      state.queue = qq;
-      renderQueue();
-    });
-    list.appendChild(li);
-  });
-  refreshIcons();
-}
-
 // --- lyrics ---
 interface LrcLine {
   t: number;

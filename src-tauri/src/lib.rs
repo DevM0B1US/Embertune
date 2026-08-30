@@ -4,7 +4,7 @@ mod downloader;
 mod player;
 mod settings;
 
-use db::{Db, NewTrack, Playlist, Track};
+use db::{Db, NewTrack, Track};
 use downloader::{DownloadManager, JobView};
 use player::{Player, PlayerState};
 use std::sync::Arc;
@@ -502,49 +502,6 @@ fn update_track_meta(
 }
 
 #[tauri::command]
-fn get_playlists(db: State<Arc<Db>>) -> Result<Vec<Playlist>, String> {
-    db.get_playlists().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn create_playlist(db: State<Arc<Db>>, name: String) -> Result<i64, String> {
-    db.create_playlist(name, unix_now()).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn rename_playlist(db: State<Arc<Db>>, id: i64, name: String) -> Result<(), String> {
-    db.rename_playlist(id, name).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn delete_playlist(app: AppHandle, db: State<Arc<Db>>, id: i64) -> Result<(), String> {
-    db.delete_playlist(id).map_err(|e| e.to_string())?;
-    let _ = app.emit("playlists-changed", ());
-    Ok(())
-}
-
-#[tauri::command]
-fn add_to_playlist(db: State<Arc<Db>>, playlist_id: i64, track_id: i64) -> Result<(), String> {
-    db.add_to_playlist(playlist_id, track_id)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn remove_from_playlist(
-    db: State<Arc<Db>>,
-    playlist_id: i64,
-    track_id: i64,
-) -> Result<(), String> {
-    db.remove_from_playlist(playlist_id, track_id)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn get_playlist_tracks(db: State<Arc<Db>>, playlist_id: i64) -> Result<Vec<Track>, String> {
-    db.get_playlist_tracks(playlist_id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 fn set_shuffle(p: State<Player>, on: bool) {
     p.set_shuffle(on);
 }
@@ -607,11 +564,6 @@ fn window_close(app: tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.close();
     }
-}
-
-#[tauri::command]
-fn reorder_queue(p: State<Player>, from: usize, to: usize) {
-    p.reorder_queue(from, to);
 }
 
 #[tauri::command]
@@ -874,13 +826,6 @@ pub fn run() {
             update_engines,
             set_favorite,
             update_track_meta,
-            get_playlists,
-            create_playlist,
-            rename_playlist,
-            delete_playlist,
-            add_to_playlist,
-            remove_from_playlist,
-            get_playlist_tracks,
             set_shuffle,
             set_repeat,
             set_speed,
@@ -893,7 +838,6 @@ pub fn run() {
             window_minimize,
             window_toggle_maximize,
             window_close,
-            reorder_queue,
             get_lyrics,
             get_art,
             extract_art,

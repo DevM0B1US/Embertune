@@ -9,7 +9,6 @@ import {
   ICON_PLAY,
   ICON_DEL,
   ICON_EDIT,
-  ICON_ADD,
   ICON_HEART,
   sndOpen,
   sndClose,
@@ -20,8 +19,6 @@ import {
   state,
   artCache,
   downloads,
-  playlistGroups,
-  currentPlaylist,
   favOnly,
   setFavOnly,
   searchTerm,
@@ -31,16 +28,11 @@ import {
   metaTrack,
   setMetaTrack,
 } from "./lib";
-import { openPlaylistsFor } from "./playlists";
 import type { Track } from "./lib";
 
 // --- library ---
 export async function refreshLibrary(): Promise<void> {
-  if (currentPlaylist) {
-    setTracks(await invoke<Track[]>("get_playlist_tracks", { playlistId: currentPlaylist.id }));
-  } else {
-    setTracks(await invoke<Track[]>("get_library"));
-  }
+  setTracks(await invoke<Track[]>("get_library"));
   renderLibrary();
 }
 
@@ -67,15 +59,10 @@ export function renderLibrary(): void {
   const list = $("#track-list");
   list.innerHTML = "";
   const shown = applyViewFilter(tracks);
-  const activeDls =
-    [...downloads.values()].length +
-    [...playlistGroups.values()].filter((g) => !g.finished).length;
+  const activeDls = [...downloads.values()].length;
   const empty = $("#empty-library");
   empty.classList.toggle("hidden", shown.length > 0 || activeDls > 0);
   empty.textContent = tracks.length === 0 ? "Nothing here yet. Drop a URL above." : "No matches.";
-  $("#btn-back").classList.toggle("hidden", !currentPlaylist);
-  $("#btn-playlist-op").classList.toggle("hidden", !currentPlaylist);
-  $("#lib-title").textContent = currentPlaylist ? currentPlaylist.name : "Library";
 
   renderLibraryTracks(list, shown);
 }
@@ -101,7 +88,6 @@ function renderLibraryTracks(list: HTMLElement, shown: Track[]): void {
           ${ICON_HEART(t.favorite)}
         </button>
         <button class="edit-btn" title="Edit">${ICON_EDIT}</button>
-        <button class="addpl-btn" title="Add to playlist">${ICON_ADD}</button>
         <button class="del-btn" title="Delete">${ICON_DEL}</button>
       </div>
     `;
@@ -112,10 +98,6 @@ function renderLibraryTracks(list: HTMLElement, shown: Track[]): void {
     });
     li.querySelector(".heart-btn")!.addEventListener("click", () => toggleFavorite(t));
     li.querySelector(".edit-btn")!.addEventListener("click", () => openMeta(t));
-    li.querySelector(".addpl-btn")!.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openPlaylistsFor(t);
-    });
     li.querySelector(".del-btn")!.addEventListener("click", () => deleteTrack(t));
     list.appendChild(li);
     observeRowArt(li, t);

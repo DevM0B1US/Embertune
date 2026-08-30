@@ -18,7 +18,6 @@ use parsers::*;
 pub enum JobKind {
     Youtube,
     Spotify,
-    Playlist,
 }
 
 #[derive(Clone, Copy, PartialEq, Serialize)]
@@ -42,25 +41,7 @@ pub struct JobView {
     pub downloaded: u64,
     pub total: u64,
     pub error: Option<String>,
-    /// Track already existed on disk (or in the library) — nothing was
-    /// downloaded, the UI should show it as skipped rather than done.
     pub skipped: bool,
-    /// Set on track jobs spawned from a playlist download; the playlist's own
-    /// job id. The frontend groups tracks by this to build the playlist panel.
-    pub group_id: Option<u64>,
-    /// Playlist metadata only on the playlist's own job (kind == Playlist):
-    /// resolved playlist name and total track count.
-    pub group_name: String,
-    pub group_total: usize,
-    /// Completed-track count for the playlist header (live on fallback
-    /// whole-playlist downloads that spotdl/yt-dlp report as "X of Y").
-    pub group_done: usize,
-    /// How many songs spotdl skipped (already on disk) during a fallback
-    /// whole-playlist download — surfaced in the group header so the user
-    /// sees them instead of a silent "X/Y complete".
-    pub group_skipped: usize,
-    /// App playlist id the tracks are being added to (set on playlist downloads).
-    pub db_playlist: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -75,13 +56,6 @@ struct Job {
     total: u64,
     error: Option<String>,
     skipped: bool,
-    children: Vec<u64>,
-    group_id: Option<u64>,
-    group_name: String,
-    group_total: usize,
-    group_done: usize,
-    group_skipped: usize,
-    db_playlist: Option<i64>,
 }
 
 impl Job {
@@ -97,12 +71,6 @@ impl Job {
             total: self.total,
             error: self.error.clone(),
             skipped: self.skipped,
-            group_id: self.group_id,
-            group_name: self.group_name.clone(),
-            group_total: self.group_total,
-            group_done: self.group_done,
-            group_skipped: self.group_skipped,
-            db_playlist: self.db_playlist,
         }
     }
 }
@@ -121,8 +89,6 @@ struct Inner {
     settings: Arc<SettingsStore>,
 }
 
-/// Unified state behind a single mutex — eliminates the ABBA lock-order
-/// inversion between `list()` and `clear_finished()`.
 struct DownloadState {
     jobs: HashMap<u64, Job>,
     order: Vec<u64>,
@@ -147,40 +113,17 @@ impl DownloadManager {
     }
 
     pub fn add(&self, url: String) -> u64 {
-        let kind = if is_playlist_url(&url) {
-            JobKind::Playlist
-        } else {
-            kind_of(&url)
-        };
+        let kind = kind_of(&url);
         let inner = self.inner.clone();
         let id = push_job(&inner, url, kind);
         let inner2 = inner.clone();
-        if kind == JobKind::Playlist {
-            // A playlist URL gets resolved into its individual tracks first
-            // (per-track download jobs with real progress), with a fallback to
-            // downloading the whole playlist as one job if enumeration fails.
-            tauri::async_runtime::spawn(async move {
-                run_playlist(&inner2, id).await;
-            });
-        } else {
-            tauri::async_runtime::spawn(async move {
-                run_job(inner2, id).await;
-            });
-        }
+        tauri::async_runtime::spawn(async move {
+            run_job(inner2, id).await;
+        });
         id
     }
 
     pub fn cancel(&self, id: u64) {
-        // Cancelling a playlist job cancels every track it queued too.
-        let children: Vec<u64> = {
-            let st = self.inner.state.lock().unwrap();
-            st.jobs.get(&id)
-                .map(|j| j.children.clone())
-                .unwrap_or_default()
-        };
-        for c in children {
-            self.cancel(c);
-        }
         {
             let mut procs = self.inner.procs.lock().unwrap();
             if let Some(mut child) = procs.remove(&id) {
@@ -202,12 +145,10 @@ impl DownloadManager {
     pub fn list(&self) -> Vec<JobView> {
         let st = self.inner.state.lock().unwrap();
         let active = [JobStatus::Queued, JobStatus::Downloading];
-        // Surface running work, plus completed playlist headers so the
-        // playlist panel survives an app restart mid-download.
         st.order
             .iter()
             .filter_map(|id| st.jobs.get(id).map(|j| j.view()))
-            .filter(|v| active.contains(&v.status) || v.kind == JobKind::Playlist)
+            .filter(|v| active.contains(&v.status))
             .collect()
     }
 
@@ -249,409 +190,11 @@ fn push_job(inner: &Arc<Inner>, url: String, kind: JobKind) -> u64 {
                 total: 0,
                 error: None,
                 skipped: false,
-                children: Vec::new(),
-                group_id: None,
-                group_name: String::new(),
-                group_total: 0,
-                group_done: 0,
-                group_skipped: 0,
-                db_playlist: None,
             },
         );
         st.order.push(id);
     }
     id
-}
-
-struct Entry {
-    url: String,
-    title: String,
-}
-
-const MAX_PLAYLIST_TRACKS: usize = 1000;
-
-/// A playlist URL resolves into its individual tracks before anything is
-/// downloaded: YouTube playlists are enumerated with `yt-dlp --flat-playlist`
-/// and Spotify playlists through the Spotify Web API (the app already stores
-/// the client credentials for spotdl). Each track becomes its own download
-/// job so the UI shows real per-track progress.
-async fn run_playlist(inner: &Arc<Inner>, id: u64) {
-    {
-        let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
-        if let Some(j) = jobs.get_mut(&id) {
-            j.status = JobStatus::Downloading;
-            j.title = "Resolving playlist…".into();
-        }
-    }
-    emit_job(inner, id);
-
-    let url = inner
-        .state
-        .lock()
-        .unwrap()
-        .jobs
-        .get(&id)
-        .map(|j| j.url.clone())
-        .unwrap_or_default();
-
-    let resolved = match tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        resolve_entries(inner, &url),
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(_) => Err("playlist resolve timed out".into()),
-    };
-
-    {
-        let cancelled = inner
-            .state
-            .lock()
-            .unwrap()
-            .jobs
-            .get(&id)
-            .map(|j| j.status == JobStatus::Cancelled)
-            .unwrap_or(false);
-        if cancelled {
-            emit_job(inner, id);
-            return;
-        }
-    }
-
-    match resolved {
-        Ok((_title, entries)) if entries.is_empty() => {
-            set_job_error(
-                inner,
-                id,
-                "playlist has no tracks (is it private?)".into(),
-            );
-        }
-        Ok((title, entries)) => {
-            let kind = kind_of(&url);
-            let total = entries.len();
-            // every downloaded track also lands in its own app playlist, so the
-            // collection shows up in the Playlists menu alongside the library
-            let db_playlist = inner.db.create_playlist_unique(title.clone()).ok();
-            let mut child_ids: Vec<u64> = Vec::with_capacity(total);
-            for e in entries {
-                let child = push_job(inner, track_url(&url, &e), kind);
-                {
-                    let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
-                    if let Some(j) = jobs.get_mut(&child) {
-                        j.title = e.title.clone();
-                        j.group_id = Some(id);
-                        j.db_playlist = db_playlist;
-                    }
-                    if let Some(j) = jobs.get_mut(&id) {
-                        j.children.push(child);
-                    }
-                }
-                child_ids.push(child);
-                let inner2 = inner.clone();
-                tauri::async_runtime::spawn(async move {
-                    run_job(inner2, child).await;
-                });
-            }
-            {
-                let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
-                if let Some(j) = jobs.get_mut(&id) {
-                    j.status = JobStatus::Completed;
-                    j.percent = 100.0;
-                    j.title = title.clone();
-                    j.group_name = title;
-                    j.group_total = total;
-                    j.db_playlist = db_playlist;
-                }
-            }
-            emit_job(inner, id);
-            // surface every track immediately so the panel shows the full song
-            // list with the current one highlighted as it downloads
-            for c in child_ids {
-                emit_job(inner, c);
-            }
-        }
-        Err(_e) => {
-            // Enumeration failed (private playlist, missing creds, network…).
-            // Don't give up — fall back to downloading the whole URL as one job
-            // (spotdl / yt-dlp handle playlist URLs natively).
-            let db_playlist = inner.db.create_playlist_unique("Playlist".into()).ok();
-            let child = push_job(inner, url.clone(), kind_of(&url));
-            {
-                let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
-                if let Some(j) = jobs.get_mut(&child) {
-                    j.group_id = Some(id);
-                    j.db_playlist = db_playlist;
-                }
-                if let Some(j) = jobs.get_mut(&id) {
-                    j.children.push(child);
-                    j.group_total = 1;
-                }
-            }
-            let inner2 = inner.clone();
-            tauri::async_runtime::spawn(async move {
-                run_job(inner2, child).await;
-            });
-            {
-                let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
-                if let Some(j) = jobs.get_mut(&id) {
-                    j.status = JobStatus::Completed;
-                    j.title = "Playlist — downloading as one job".into();
-                    j.group_name = "Playlist".into();
-                    j.group_total = 1;
-                    j.db_playlist = db_playlist;
-                }
-            }
-            emit_job(inner, id);
-        }
-    }
-}
-
-async fn resolve_entries(inner: &Arc<Inner>, url: &str) -> Result<(String, Vec<Entry>), String> {
-    if is_spotify_playlist(url) {
-        let inner = inner.clone();
-        let url = url.to_string();
-        tauri::async_runtime::spawn_blocking(move || resolve_spotify_playlist(&inner, &url))
-            .await
-            .map_err(|e| e.to_string())?
-    } else {
-        resolve_ytdlp_playlist(url).await
-    }
-}
-
-async fn resolve_ytdlp_playlist(url: &str) -> Result<(String, Vec<Entry>), String> {
-    let mut args: Vec<String> = vec![
-        "--flat-playlist".into(),
-        "-J".into(),
-        "--no-warnings".into(),
-        "--ignore-errors".into(),
-    ];
-    // Same youtube handling as the download path: JS runtime for challenge
-    // solving plus the web_embedded client to dodge 403s.
-    if let Some(rt) = js_runtime() {
-        args.push("--js-runtimes".into());
-        args.push(rt);
-    }
-    args.push("--remote-components".into());
-    args.push("ejs:github".into());
-    args.push("--extractor-args".into());
-    args.push("youtube:player_client=web_embedded".into());
-    args.push(url.to_string());
-
-    let out = match Command::new("yt-dlp").args(&args).output().await {
-        Ok(o) => o,
-        Err(e) => return Err(format!("yt-dlp not available: {e}")),
-    };
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(tail(err.trim(), 300));
-    }
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
-    let title = json
-        .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Playlist")
-        .to_string();
-    let mut entries = Vec::new();
-    if let Some(arr) = json.get("entries").and_then(|v| v.as_array()) {
-        for it in arr.iter().take(MAX_PLAYLIST_TRACKS) {
-            let u = it
-                .get("url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if u.is_empty() {
-                continue;
-            }
-            let t = it
-                .get("title")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            entries.push(Entry { url: u, title: t });
-        }
-    }
-    Ok((title, entries))
-}
-
-fn resolve_spotify_playlist(
-    inner: &Arc<Inner>,
-    url: &str,
-) -> Result<(String, Vec<Entry>), String> {
-    let settings = inner.settings.get();
-    let (cid, csec) = match (
-        settings.spotify_client_id.clone(),
-        settings.spotify_client_secret.clone(),
-    ) {
-        (Some(a), Some(b)) => (a, b),
-        _ => {
-            // The app stores its own creds in Settings → Spotify, but most
-            // installs only ever configured spotdl itself. Borrow spotdl's
-            // credentials so a playlist URL still resolves into per-track
-            // jobs (real per-song progress + skipped markers) instead of
-            // silently degrading to a single whole-playlist job.
-            match spotdl_config_creds() {
-                Some((a, b)) => (a, b),
-                None => {
-                    return Err(
-                        "Spotify credentials missing — set Client ID/Secret in Settings → Spotify".into(),
-                    )
-                }
-            }
-        }
-    };
-    let pid = spotify_playlist_id(url).ok_or("could not parse Spotify playlist URL")?;
-    let token = spotify_token(&cid, &csec)?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(30))
-        .build();
-
-    let meta_url = format!("https://api.spotify.com/v1/playlists/{pid}?fields=name");
-    let meta: serde_json::Value = agent
-        .get(&meta_url)
-        .set("Authorization", &format!("Bearer {token}"))
-        .call()
-        .map_err(|e| e.to_string())?
-        .into_json()
-        .map_err(|e| e.to_string())?;
-    let title = meta
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Spotify playlist")
-        .to_string();
-
-    let mut entries: Vec<Entry> = Vec::new();
-    let mut offset = 0usize;
-    loop {
-        let tracks_url = format!(
-            "https://api.spotify.com/v1/playlists/{pid}/tracks?limit=50&offset={offset}&fields=items(track(id,name,duration_ms,artists(name))),next"
-        );
-        let resp: serde_json::Value = agent
-            .get(&tracks_url)
-            .set("Authorization", &format!("Bearer {token}"))
-            .call()
-            .map_err(|e| e.to_string())?
-            .into_json()
-            .map_err(|e| e.to_string())?;
-        if let Some(items) = resp.get("items").and_then(|v| v.as_array()) {
-            for it in items {
-                let track = &it["track"];
-                // some entries are null placeholders (region-locked/unavailable)
-                if track.is_null() {
-                    continue;
-                }
-                let tid = track
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                if tid.is_empty() {
-                    continue;
-                }
-                let name = track
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let artists: Vec<String> = track
-                    .get("artists")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|x| x.get("name").and_then(|n| n.as_str()))
-                            .map(|s| s.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let entry_title = if artists.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{} - {}", artists.join(", "), name)
-                };
-                entries.push(Entry {
-                    url: format!("https://open.spotify.com/track/{tid}"),
-                    title: entry_title,
-                });
-                if entries.len() >= MAX_PLAYLIST_TRACKS {
-                    break;
-                }
-            }
-        }
-        let has_next = resp
-            .get("next")
-            .and_then(|v| v.as_str())
-            .map(|s| !s.is_empty())
-            .unwrap_or(false);
-        if !has_next || entries.len() >= MAX_PLAYLIST_TRACKS {
-            break;
-        }
-        offset += 50;
-    }
-    Ok((title, entries))
-}
-
-fn spotify_token(cid: &str, csec: &str) -> Result<String, String> {
-    use base64::Engine;
-    let cred = base64::engine::general_purpose::STANDARD
-        .encode(format!("{cid}:{csec}").as_bytes());
-    let resp = ureq::post("https://accounts.spotify.com/api/token")
-        .set("Authorization", &format!("Basic {cred}"))
-        .set("Content-Type", "application/x-www-form-urlencoded")
-        .send_form(&[("grant_type", "client_credentials")])
-        .map_err(|e| e.to_string())?;
-    let v: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
-    v.get("access_token")
-        .and_then(|t| t.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Spotify auth failed — check your Client ID/Secret".into())
-}
-
-fn spotify_playlist_id(url: &str) -> Option<String> {
-    let u = url.trim();
-    const PREFIXES: [&str; 2] = ["spotify:playlist:", "open.spotify.com/playlist/"];
-    for p in PREFIXES {
-        if let Some(idx) = u.find(p) {
-            let rest = &u[idx + p.len()..];
-            let id: String = rest
-                .chars()
-                .take_while(|c| c.is_alphanumeric())
-                .collect();
-            if !id.is_empty() {
-                return Some(id);
-            }
-        }
-    }
-    None
-}
-
-fn track_url(playlist_url: &str, e: &Entry) -> String {
-    if e.url.starts_with("http://") || e.url.starts_with("https://") {
-        e.url.clone()
-    } else if is_spotify_playlist(playlist_url) {
-        format!("https://open.spotify.com/track/{}", e.url)
-    } else {
-        format!("https://www.youtube.com/watch?v={}", e.url)
-    }
-}
-
-fn is_playlist_url(url: &str) -> bool {
-    is_youtube_playlist(url) || is_spotify_playlist(url)
-}
-
-fn is_youtube_playlist(url: &str) -> bool {
-    let u = url.trim().to_ascii_lowercase();
-    (u.contains("youtube.com") || u.contains("youtu.be") || u.contains("music.youtube.com"))
-        && (u.contains("/playlist") || u.contains("list="))
-}
-
-fn is_spotify_playlist(url: &str) -> bool {
-    let u = url.trim();
-    u.contains("open.spotify.com/playlist/") || u.starts_with("spotify:playlist:")
 }
 
 fn is_spotify_url(url: &str) -> bool {
@@ -667,8 +210,6 @@ fn kind_of(url: &str) -> JobKind {
 }
 
 async fn run_job(inner: Arc<Inner>, id: u64) {
-    // limit how many download processes run at once so bulk queuing doesn't
-    // saturate the link with dozens of yt-dlp/spotdl children
     let _permit = match inner.active.acquire().await {
         Ok(p) => p,
         Err(_) => return,
@@ -677,7 +218,6 @@ async fn run_job(inner: Arc<Inner>, id: u64) {
     {
         let mut _st = inner.state.lock().unwrap();
         let jobs = &mut _st.jobs;
-        // cancelled while waiting on the permit — don't resurrect it
         let cancelled = jobs
             .get(&id)
             .map(|j| j.status == JobStatus::Cancelled)
@@ -697,37 +237,10 @@ async fn run_job(inner: Arc<Inner>, id: u64) {
         None => return,
     };
 
-    // Playlist child that's already in the library (same source URL, e.g. an
-    // earlier download or a song repeated across playlists): don't re-download,
-    // just link the existing track into the collection and mark it done.
-    if let Some(pid) = job.db_playlist {
-        if let Ok(Some(existing)) = inner.db.track_id_by_source_url(&job.url) {
-            let _ = inner.db.add_to_playlist(pid, existing);
-            {
-                let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
-                if let Some(j) = jobs.get_mut(&id) {
-                    j.status = JobStatus::Completed;
-                    j.percent = 100.0;
-                    j.skipped = true;
-                    // keep the real song title (playlist children are pre-titled
-                    // from the resolved entry) so the group shows WHICH song was
-                    // skipped — only a bare single-track add gets the generic text
-                    if j.title.is_empty() {
-                        j.title = "Already in library — added to playlist".into();
-                    }
-                }
-            }
-            emit_job(&inner, id);
-            return;
-        }
-    }
-
     let guard = tokio::time::timeout(std::time::Duration::from_secs(3600), async {
         match job.kind {
             JobKind::Youtube => run_ytdlp(&inner, &job).await,
             JobKind::Spotify => run_spotdl(&inner, &job).await,
-            JobKind::Playlist => {}
         }
     })
     .await;
@@ -752,13 +265,8 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
 
     let mut args: Vec<String> = Vec::new();
     args.push("--newline".into());
-    // `--print` (used below for title/filepath) forces quiet mode, which yt-dlp
-    // maps to `noprogress`. Without this flag no progress lines are emitted and
-    // the UI progress bar never moves.
     args.push("--progress".into());
     args.push("--ignore-errors".into());
-    // yt-dlp 2026 needs a JS runtime for YouTube challenge solving; prefer
-    // whatever is installed (node > deno > bun).
     if let Some(rt) = js_runtime() {
         args.push("--js-runtimes".into());
         args.push(rt);
@@ -768,22 +276,14 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
     args.push("--extractor-args".into());
     args.push("youtube:player_client=web_embedded".into());
     args.push("--progress-template".into());
-    // `download:` is the reserved type-prefix and gets consumed by yt-dlp, so the
-    // emitted line is `dl:<bytes>/<bytes>|<title>`.
     args.push("download:dl:%(progress.downloaded_bytes)s/%(progress.total_bytes)s|%(info.title)s".into());
-    // prints the real title as soon as yt-dlp has fetched the page, before
-    // any progress lines arrive
     args.push("--print".into());
     args.push("TITLE:%(title)s".into());
     args.push("--print".into());
     args.push("after_move:FILEPATH:%(filepath)s".into());
     args.push("-f".into());
-    // prefer m4a so --embed-thumbnail can actually embed (webm is unsupported);
-    // fall back to anything if m4a isn't offered.
     args.push("bestaudio[ext=m4a]/bestaudio/best".into());
     args.push("--embed-thumbnail".into());
-    // download-quality config: "best" keeps the original m4a; mp3 presets
-    // re-encode to a fixed bitrate via ffmpeg.
     if let Some(q) = match inner.settings.get().quality.as_str() {
         "mp3_192" => Some("192"),
         "mp3_320" => Some("320"),
@@ -794,9 +294,6 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
         args.push("--audio-quality".into());
         args.push(q.into());
     }
-    // flaky-network resilience: generous retries with backoff, longer socket
-    // timeouts, chunked transfers (finer-grained resume on drops), and
-    // fragment-level retries for DASH/HLS streams.
     args.push("--retries".into());
     args.push("10".into());
     args.push("--fragment-retries".into());
@@ -847,7 +344,7 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
         if let Some(rest) = line.strip_prefix("TITLE:") {
             {
                 let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
+                let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.title = rest.to_string();
                 }
@@ -865,7 +362,7 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
             };
             {
                 let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
+                let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.downloaded = downloaded;
                     j.total = total;
@@ -875,9 +372,6 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
                     }
                 }
             }
-            // throttle: yt-dlp --newline emits ~4-8 progress lines/sec and each
-            // one was triggering a full frontend library re-render; 120ms keeps
-            // the progress bar feeling live without hammering the UI.
             if last_progress.elapsed() > std::time::Duration::from_millis(120) {
                 emit_job(inner, id);
                 last_progress = std::time::Instant::now();
@@ -887,36 +381,12 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
         } else if ytdlp_skipped(&line) {
             {
                 let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
+                let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.skipped = true;
                 }
             }
             emit_job(inner, id);
-        } else if let Some((item, total_items)) = ytdlp_item(&line) {
-            // fallback whole-playlist download: yt-dlp prints "Downloading
-            // item X of Y" before each video — feed it into the playlist
-            // header for a live group progress bar.
-            if is_playlist_url(&job.url) {
-                if let Some(pid) = job.group_id {
-                    let changed = {
-                        let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
-                        let mut c = false;
-                        if let Some(g) = jobs.get_mut(&pid) {
-                            if g.group_total != total_items || g.group_done != item.saturating_sub(1) {
-                                g.group_total = total_items;
-                                g.group_done = item.saturating_sub(1);
-                                c = true;
-                            }
-                        }
-                        c
-                    };
-                    if changed {
-                        emit_job(inner, pid);
-                    }
-                }
-            }
         }
     }
 
@@ -956,10 +426,7 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
             let now = unix_now();
             let mut added = 0usize;
             for p in &paths {
-                if let Ok(Some(existing)) = inner.db.track_id_by_path(p) {
-                    if let Some(pid) = job.db_playlist {
-                        let _ = inner.db.add_to_playlist(pid, existing);
-                    }
+                if let Ok(Some(_existing)) = inner.db.track_id_by_path(p) {
                     continue;
                 }
                 let (artist, title) = split_artist_title(&file_stem(p));
@@ -973,17 +440,14 @@ async fn run_ytdlp(inner: &Inner, job: &Job) {
                     source: "youtube".into(),
                     added_at: now,
                 };
-                if let Ok(tid) = inner.db.add_track(&nt) {
+                if let Ok(_tid) = inner.db.add_track(&nt) {
                     crate::art::extract_cover(p);
-                    if let Some(pid) = job.db_playlist {
-                        let _ = inner.db.add_to_playlist(pid, tid);
-                    }
                     added += 1;
                 }
             }
             {
                 let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
+                let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.status = JobStatus::Completed;
                     j.percent = 100.0;
@@ -1015,9 +479,6 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
     }
     let settings = inner.settings.get();
     let before: HashSet<String> = dir_snapshot(out.as_path());
-    // spotdl downloads via yt-dlp into its own temp folder (~/.config/spotdl/
-    // temp or ~/.spotdl/temp) and only moves finished files into the output
-    // dir — so partial bytes must be read from there, not the output dir.
     let temp = spotdl_temp_dir();
     let temp_before: Option<HashSet<String>> = temp.as_deref().map(|t| dir_snapshot(t));
 
@@ -1035,7 +496,6 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
     cmd.arg(&url)
         .arg("--output")
         .arg(format!("{}/{{artists}} - {{title}}.{{output-ext}}", out.display()));
-    // download-quality config
     match inner.settings.get().quality.as_str() {
         "mp3_192" => {
             cmd.arg("--format").arg("mp3").arg("--bitrate").arg("192K");
@@ -1044,18 +504,13 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
             cmd.arg("--format").arg("mp3").arg("--bitrate").arg("320K");
         }
         _ => {
-            // keep the source audio at its original bitrate instead of
-            // re-encoding to a fixed value
             cmd.arg("--format").arg("m4a").arg("--bitrate").arg("auto");
         }
     }
     cmd.arg("--threads")
         .arg("4")
         .arg("--print-errors")
-        // plain single-line progress so we can parse a live percent
         .arg("--simple-tui")
-        // synced lyrics provider is required for --generate-lrc to write
-        // .lrc files next to the track (the app's lyrics panel reads them)
         .arg("--lyrics")
         .arg("genius")
         .arg("musixmatch")
@@ -1064,10 +519,6 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
         .arg("--generate-lrc")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // spotdl bundles its own yt-dlp; feed it the same flags that make the
-    // app's direct yt-dlp downloads work — a JS runtime for challenge solving
-    // plus the web_embedded client to dodge 403s. Without these spotdl fails
-    // ("Some YouTube downloads require Deno").
     let mut ydlp_args =
         String::from("--extractor-args youtube:player_client=web_embedded --remote-components ejs:github");
     if let Some(rt) = js_runtime() {
@@ -1081,8 +532,6 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
         cmd.env("SPOTIFY_CLIENT_ID", cid)
             .env("SPOTIFY_CLIENT_SECRET", csec);
     }
-    // Python block-buffers stdout when it's a pipe, which would stall spotdl's
-    // progress lines (and the UI) until 8KB accumulates. Force unbuffered.
     cmd.env("PYTHONUNBUFFERED", "1");
 
     let mut child = match cmd.spawn() {
@@ -1117,8 +566,6 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
         let mut _st = inner.state.lock().unwrap();
         let jobs = &mut _st.jobs;
         if let Some(j) = jobs.get_mut(&id) {
-            // playlist children already carry their real song title from the
-            // resolved entry — don't replace it with the generic marker
             if j.title.is_empty() {
                 j.title = "Spotify — working…".into();
             }
@@ -1127,11 +574,6 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
     }
     emit_job(inner, id);
 
-    // spotdl's stdout can be buffered/unreliable (and its percent only steps
-    // through coarse phases), so drive the live UI from the file actually being
-    // written on disk: every 300ms we report the current song name and byte
-    // count, which gives a real-time title, MB count and MB/s rate regardless
-    // of what spotdl prints.
     let mon_inner = inner.clone();
     let mon_out = out.clone();
     let mon_before = before.clone();
@@ -1159,8 +601,6 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
                     if bytes > 0 {
                         j.downloaded = bytes;
                     }
-                    // fall back to the on-disk file name when spotdl hasn't
-                    // given us a song title yet (or only the generic marker)
                     if let Some(n) = name {
                         if j.title.is_empty() || j.title == "Spotify — working…" {
                             j.title = n;
@@ -1176,10 +616,8 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
         }
     });
 
-    // parse spotdl's simple-tui stdout for a live percent + track name
     let mut raw = String::new();
     let mut last_emit = std::time::Instant::now();
-    let mut last_skipped_count = 0usize;
     let mut pout = stdout;
     loop {
         let mut chunk = vec![0u8; 8192];
@@ -1193,81 +631,25 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
                 let pct = last_percent(&raw).or_else(|| spotdl_phase_percent(&raw));
                 let file = last_dl_file(&raw);
                 let song = spotdl_song_name(&raw);
-                let compl = spotdl_complete(&raw);
                 let sk = spotdl_skipped(&raw);
                 {
                     let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
+                    let jobs = &mut _st.jobs;
                     if let Some(j) = jobs.get_mut(&id) {
                         if let Some(p) = pct {
                             j.percent = p;
                         }
-                        // song name beats a raw filename for display
                         if let Some(s) = song {
                             j.title = s;
                         } else if let Some(f) = file {
                             j.title = f;
                         }
-                        // a single-track job that was skipped stays marked; a
-                        // whole-playlist download skips individual songs all the
-                        // time, so never flag the job itself as skipped there
-                        if sk && !is_playlist_url(&job.url) {
+                        if sk {
                             j.skipped = true;
                         }
-                        // real-time byte count (file-system driven; the monitor
-                        // task also updates it, this keeps the rate fresh on
-                        // every stdout flush too)
                         let (b, _) = spotdl_work(out.as_path(), temp.as_deref(), temp_before.as_ref(), &before);
                         if b > 0 {
                             j.downloaded = b;
-                        }
-                    }
-                }
-                // fallback whole-playlist download: spotdl reports "X/Y complete",
-                // feed that into the playlist header so the group progress bar,
-                // done/total counter and "Done" state stay accurate.
-                if let (Some((done, total)), Some(pid)) = (compl, job.group_id) {
-                    if is_playlist_url(&job.url) {
-                        let changed = {
-                            let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
-                            let mut c = false;
-                            if let Some(g) = jobs.get_mut(&pid) {
-                                if g.group_total != total || g.group_done != done {
-                                    g.group_total = total;
-                                    g.group_done = done;
-                                    c = true;
-                                }
-                            }
-                            c
-                        };
-                        if changed {
-                            emit_job(inner, pid);
-                        }
-                    }
-                }
-                // tally songs spotdl skipped on a fallback whole-playlist download
-                // (one "Skipping X…"/"X: Skipped" line per song) so the group
-                // header can show "N skipped" instead of hiding it entirely.
-                let skipped_now = spotdl_skipped_count(&raw);
-                if skipped_now > last_skipped_count {
-                    let delta = skipped_now - last_skipped_count;
-                    last_skipped_count = skipped_now;
-                    if is_playlist_url(&job.url) {
-                        if let Some(pid) = job.group_id {
-                            let changed = {
-                                let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
-                                let mut c = false;
-                                if let Some(g) = jobs.get_mut(&pid) {
-                                    g.group_skipped += delta;
-                                    c = true;
-                                }
-                                c
-                            };
-                            if changed {
-                                emit_job(inner, pid);
-                            }
                         }
                     }
                 }
@@ -1316,10 +698,7 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
             let now = unix_now();
             let mut added = 0usize;
             for p in dir_diff(out.as_path(), &before) {
-                if let Ok(Some(existing)) = inner.db.track_id_by_path(&p) {
-                    if let Some(pid) = job.db_playlist {
-                        let _ = inner.db.add_to_playlist(pid, existing);
-                    }
+                if let Ok(Some(_existing)) = inner.db.track_id_by_path(&p) {
                     continue;
                 }
                 let (artist, title) = split_artist_title(&file_stem(&p));
@@ -1333,23 +712,18 @@ async fn run_spotdl(inner: &Arc<Inner>, job: &Job) {
                     source: "spotify".into(),
                     added_at: now,
                 };
-                if let Ok(tid) = inner.db.add_track(&nt) {
+                if let Ok(_tid) = inner.db.add_track(&nt) {
                     crate::art::extract_cover(&p);
-                    if let Some(pid) = job.db_playlist {
-                        let _ = inner.db.add_to_playlist(pid, tid);
-                    }
                     added += 1;
                 }
             }
             {
                 let mut _st = inner.state.lock().unwrap();
-        let jobs = &mut _st.jobs;
+                let jobs = &mut _st.jobs;
                 if let Some(j) = jobs.get_mut(&id) {
                     j.status = JobStatus::Completed;
                     j.percent = 100.0;
-                    // Single track: success with zero new files means spotdl
-                    // found it already on disk and skipped it.
-                    if added == 0 && !is_playlist_url(&url) {
+                    if added == 0 {
                         j.skipped = true;
                         if j.title.is_empty() || j.title == "Spotify — working…" {
                             j.title = "Already downloaded".into();
@@ -1407,9 +781,6 @@ fn dir_snapshot(dir: &std::path::Path) -> HashSet<String> {
     set
 }
 
-/// Move spotdl's plain `.lrc` lyrics files (unused by the app) into a
-/// `Lyrics/` subfolder so the download dir stays audio-only. The app's own
-/// `.lrclib` cache must stay next to the audio file — the player reads it.
 pub(crate) fn organize_lyrics(dir: &std::path::Path) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut moved = 0u32;
@@ -1439,9 +810,6 @@ fn dir_diff(dir: &std::path::Path, before: &HashSet<String>) -> Vec<String> {
         for e in rd.flatten() {
             let p = e.path();
             let s = p.to_string_lossy().to_string();
-            // Only audio files are tracks — spotdl also drops `.lrc` lyric
-            // files next to each download, and those must not become library
-            // entries (they'd break playback and confuse lyrics lookup).
             if !before.contains(&s) && p.is_file() && is_audio(&e.file_name().to_string_lossy()) {
                 out.push(s);
             }
@@ -1470,12 +838,6 @@ fn is_audio(name: &str) -> bool {
     )
 }
 
-/// Bytes + file name currently being written for a download that doesn't
-/// report its own byte progress (spotdl). Sums the partial files yt-dlp drops
-/// while downloading; once those are gone (postprocessor running / finished),
-/// falls back to the most recently modified audio file — the final file ffmpeg
-/// is writing — if it changed within the last few seconds. Files that already
-/// existed when the job started are ignored.
 fn spotdl_temp_dir() -> Option<std::path::PathBuf> {
     let home = dirs::home_dir()?;
     for base in [home.join(".config/spotdl"), home.join(".spotdl")] {
@@ -1487,9 +849,6 @@ fn spotdl_temp_dir() -> Option<std::path::PathBuf> {
     None
 }
 
-/// Spotdl progress: byte count comes from yt-dlp partials growing inside
-/// spotdl's temp folder; the current song name comes from the newest finished
-/// audio in the output dir (temp filenames are just video IDs, useless as titles).
 fn spotdl_work(
     out: &std::path::Path,
     temp: Option<&std::path::Path>,
@@ -1526,15 +885,12 @@ fn spotdl_work(
                 continue;
             }
             let mtime = e.metadata().ok().and_then(|m| m.modified().ok());
-if is_audio(&name) {
+            if is_audio(&name) {
                 if let Some(t) = mtime {
                     if t >= cutoff && newest_audio.as_ref().map(|(nt, _)| t > *nt).unwrap_or(true) {
                         newest_audio = Some((t, name.clone()));
                     }
                     if t >= cutoff {
-                        // conversion/embedding is writing the final file into the
-                        // output dir — count those bytes too so the speed keeps
-                        // flowing through the whole song lifecycle
                         sum += e.metadata().map(|m| m.len()).unwrap_or(0);
                     }
                 }
@@ -1630,9 +986,6 @@ fn has_active_jobs(inner: &Inner) -> bool {
         .any(|j| matches!(j.status, JobStatus::Queued | JobStatus::Downloading))
 }
 
-/// GUI-launched processes on Linux get a minimal PATH that often omits
-/// ~/.local/bin (pipx/venv installs), so resolve spotdl by probing the usual
-/// locations before falling back to PATH lookup.
 fn find_spotdl() -> Option<std::path::PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
@@ -1663,6 +1016,7 @@ fn find_spotdl() -> Option<std::path::PathBuf> {
             }
         })
 }
+
 fn js_runtime() -> Option<String> {
     for name in ["node", "deno", "bun"] {
         let probe = std::process::Command::new(name)
@@ -1675,42 +1029,6 @@ fn js_runtime() -> Option<String> {
     None
 }
 
-/// Read Spotify client credentials from spotdl's own config file, which most
-/// users configure once for spotdl and never repeat inside the app. Checks the
-/// standard spotdl locations (XDG config, then home). Returns None when spotdl
-/// was never configured or the creds are blank.
-fn spotdl_config_creds() -> Option<(String, String)> {
-    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        candidates.push(std::path::Path::new(&xdg).join("spotdl/config.json"));
-    }
-    let home = std::env::var("HOME").unwrap_or_default();
-    if !home.is_empty() {
-        candidates.push(std::path::Path::new(&home).join(".config/spotdl/config.json"));
-        candidates.push(std::path::Path::new(&home).join(".spotdl/config.json"));
-    }
-    for p in candidates {
-        if let Ok(s) = std::fs::read_to_string(&p) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-                let id = v
-                    .get("client_id")
-                    .and_then(|x| x.as_str())
-                    .map(str::to_string)
-                    .filter(|x| !x.is_empty());
-                let sec = v
-                    .get("client_secret")
-                    .and_then(|x| x.as_str())
-                    .map(str::to_string)
-                    .filter(|x| !x.is_empty());
-                if let (Some(id), Some(sec)) = (id, sec) {
-                    return Some((id, sec));
-                }
-            }
-        }
-    }
-    None
-}
-
 fn file_stem(path: &str) -> String {
     std::path::Path::new(path)
         .file_stem()
@@ -1718,10 +1036,6 @@ fn file_stem(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-/// Filenames are almost always `Artist - Title` (spotdl's `{artists} -
-/// {title}` template and typical YouTube uploads). Split on the FIRST " - "
-/// so the artist lands in its own field — which the lyrics lookup needs,
-/// and the UI reads better.
 fn split_artist_title(stem: &str) -> (String, String) {
     if let Some(i) = stem.find(" - ") {
         let artist = stem[..i].trim();
@@ -1805,13 +1119,10 @@ mod work_tests {
         std::fs::create_dir_all(&temp).unwrap();
         let out_before = snapshot(&out);
         let temp_before = snapshot(&temp);
-        // partial bytes live in spotdl's temp folder (video-id filenames)
         std::fs::write(temp.join("abc123.m4a.part"), vec![0u8; 8192]).unwrap();
-        // finished song lands in the output dir
         let song = out.join("Artist - Song.m4a");
         std::fs::write(&song, vec![0u8; 4096]).unwrap();
         let (bytes, name) = spotdl_work(&out, Some(&temp), Some(&temp_before), &out_before);
-        // 8192 temp partial + 4096 freshly-written output audio
         assert_eq!(bytes, 12288);
         assert_eq!(name.as_deref(), Some("Artist - Song"));
         let _ = std::fs::remove_dir_all(&tmp);

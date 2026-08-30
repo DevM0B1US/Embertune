@@ -23,12 +23,6 @@
           <button id="add-btn" class="btn primary">Add</button>
           <div class="topbar-sep"></div>
           <button id="local-btn" class="btn" title="Add local files from disk">Add files</button>
-          <button id="btn-queue" class="tbtn topbtn" title="Queue" aria-label="Queue">
-            <i data-lucide="ListMusic" width="16" height="16"></i>
-          </button>
-          <button id="btn-playlists" class="tbtn topbtn" title="Playlists" aria-label="Playlists">
-            <i data-lucide="Folder" width="16" height="16"></i>
-          </button>
           <button id="btn-lyrics" class="tbtn topbtn" title="Lyrics" aria-label="Lyrics">
             <i data-lucide="Mic" width="16" height="16"></i>
           </button>
@@ -83,8 +77,6 @@
           <div class="view-head">
             <span id="lib-title" class="section-label">Library</span>
             <div class="lib-actions">
-              <button id="btn-back" class="btn hidden">← Library</button>
-              <button id="btn-playlist-op" class="btn hidden">Rename / Delete</button>
               <input id="search" type="text" placeholder="Search…" spellcheck="false" />
               <button id="btn-sort" class="tbtn sort-btn" title="Sort" data-sort="newest">Newest</button>
               <button id="btn-fav" class="tbtn topbtn" title="Favorites only" aria-label="Favorites only">
@@ -264,19 +256,6 @@
         </div>
       </footer>
 
-      <aside id="queue-panel" class="drawer">
-        <div class="drawer-head">
-          <span class="section-label">Up next</span>
-          <button id="btn-queue-close" class="tbtn" title="Close">
-            <i data-lucide="X" width="15" height="15"></i>
-          </button>
-        </div>
-        <div class="drawer-body">
-          <div id="queue-empty" class="empty">Queue empty</div>
-          <ul id="queue-list"></ul>
-        </div>
-      </aside>
-
       <aside id="lyrics-panel" class="drawer">
         <div class="drawer-head">
           <span class="section-label">Lyrics</span>
@@ -315,11 +294,6 @@
           <div class="eq-bars" id="eq-bars"></div>
         </div>
       </aside>
-
-      <div id="playlists-menu" class="menu hidden">
-        <button id="btn-new-playlist" class="menu-item">+ New playlist</button>
-        <div id="playlists-list"></div>
-      </div>
 
       <div id="prompt-overlay">
         <div class="settings-card prompt-card">

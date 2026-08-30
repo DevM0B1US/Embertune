@@ -108,7 +108,6 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
 
 /* adaptive topbar icons — drop secondary actions as width shrinks */
 @media (max-width: 780px) {
-  #btn-playlists,
   #btn-lyrics {
     display: none;
   }

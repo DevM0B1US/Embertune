@@ -22,7 +22,6 @@ pub struct PlayerState {
     pub shuffle: bool,
     pub repeat: String,
     pub speed: f64,
-    pub queue: Vec<Track>,
 }
 
 pub struct Player {
@@ -378,19 +377,6 @@ impl Player {
         });
     }
 
-    pub fn reorder_queue(&self, from: usize, to: usize) {
-        let mut q = self.queue.lock().unwrap();
-        if from >= q.len() || to >= q.len() {
-            return;
-        }
-        let id = q.remove(from);
-        q.insert(to, id);
-        drop(q);
-        self.with_conn(|c| {
-            let _ = c.request(&[json!("playlist-move"), json!(from as i64), json!(to as i64)]);
-        });
-    }
-
     pub fn state(&self) -> PlayerState {
         let (playing, position, duration, volume, idle, pos) = self
             .with_conn(|c| {
@@ -406,7 +392,7 @@ impl Player {
             })
             .unwrap_or((false, 0.0, 0.0, 100.0, true, None));
 
-        // fetch the whole queue in ONE query instead of N+1 per poll
+        // fetch current track
         let ids: Vec<i64> = self.queue.lock().unwrap().clone();
         let by_id: HashMap<i64, Track> = self
             .db
@@ -419,7 +405,6 @@ impl Player {
             Some(p) if p >= 0 => ids.get(p as usize).and_then(|id| by_id.get(id).cloned()),
             _ => None,
         };
-        let queue: Vec<Track> = ids.iter().filter_map(|id| by_id.get(id).cloned()).collect();
         let s = self.settings.get();
         PlayerState {
             playing,
@@ -431,7 +416,6 @@ impl Player {
             shuffle: s.shuffle,
             repeat: s.repeat,
             speed: if s.speed > 0.0 { s.speed } else { 1.0 },
-            queue,
         }
     }
 

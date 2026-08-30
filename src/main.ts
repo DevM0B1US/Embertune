@@ -15,32 +15,12 @@ import {
   closeMenus,
 } from "./lib";
 import { renderLibrary, refreshLibrary } from "./library";
-import { refreshPlaylists, renderPlaylistsMenu } from "./playlists";
-import { renderDownloads, updateGroupHeader, updateGroupTrack } from "./downloads";
-import { renderQueue, loadLyrics, updateLyrics, pollPlayer, loadSettings } from "./player";
+import { renderDownloads } from "./downloads";
+import { loadLyrics, updateLyrics, pollPlayer, loadSettings } from "./player";
 import { initEqualizer } from "./equalizer";
 import type { JobView } from "./lib";
 
 // --- drawers / menus ---
-$("#btn-queue").addEventListener("click", () => {
-  const p = $("#queue-panel");
-  const open = p.classList.toggle("open");
-  if (open) sndOpen();
-  else sndClose();
-  $("#btn-queue").classList.toggle("active", open);
-  if (open) {
-    instantClose($("#lyrics-panel"), $("#btn-lyrics"));
-    instantClose($("#eq-panel"), $("#btn-eq"));
-    $("#playlists-menu").classList.add("hidden");
-    renderQueue();
-  }
-});
-$("#btn-queue-close").addEventListener("click", () => {
-  sndClose();
-  $("#queue-panel").classList.remove("open");
-  $("#btn-queue").classList.remove("active");
-});
-
 $("#btn-lyrics").addEventListener("click", () => {
   const p = $("#lyrics-panel");
   const open = p.classList.toggle("open");
@@ -48,9 +28,7 @@ $("#btn-lyrics").addEventListener("click", () => {
   else sndClose();
   $("#btn-lyrics").classList.toggle("active", open);
   if (open) {
-    instantClose($("#queue-panel"), $("#btn-queue"));
     instantClose($("#eq-panel"), $("#btn-eq"));
-    $("#playlists-menu").classList.add("hidden");
     loadLyrics();
   }
 });
@@ -64,10 +42,7 @@ $("#btn-lyrics-close").addEventListener("click", () => {
 $("#btn-lyrics-fs").addEventListener("click", () => {
   const fs = !$("#lyrics-panel").classList.contains("fs");
   setLyricsFs(fs);
-  if (fs) {
-    $("#queue-panel").classList.remove("open");
-    $("#btn-queue").classList.remove("active");
-  } else {
+  if (!fs) {
     updateLyrics();
   }
 });
@@ -97,8 +72,6 @@ document.addEventListener("keydown", (e) => {
       if (shortcutOpenedLyrics) {
         p.classList.add("open");
         $("#btn-lyrics").classList.add("active");
-        instantClose($("#queue-panel"), $("#btn-queue"));
-        $("#playlists-menu").classList.add("hidden");
         loadLyrics();
       }
       setLyricsFs(true);
@@ -114,19 +87,11 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-$("#btn-playlists").addEventListener("click", (e) => {
-  e.stopPropagation();
-  const m = $("#playlists-menu");
-  const open = m.classList.toggle("hidden");
-  if (open) return;
-  renderPlaylistsMenu();
-});
-
 document.addEventListener("click", (e) => {
   const t = e.target as HTMLElement;
   if (
     t.closest(
-      "#queue-panel, #btn-queue, #lyrics-panel, #btn-lyrics, #eq-panel, #btn-eq, #playlists-menu, #btn-playlists"
+      "#lyrics-panel, #btn-lyrics, #eq-panel, #btn-eq"
     )
   ) {
     return;
@@ -137,19 +102,6 @@ document.addEventListener("click", (e) => {
 // --- events ---
 void listen("download-progress", (e) => {
   const j = e.payload as JobView;
-  // playlist group headers and their tracks render inside the same downloads
-  // panel; the header is the group card, children feed its track list.
-  if (j.kind === "playlist") {
-    if (j.status === "completed") sndDone();
-    // a playlist job is a group card, never a single row
-    downloads.delete(j.id);
-    updateGroupHeader(j);
-    return;
-  }
-  if (j.group_id) {
-    updateGroupTrack(j);
-    return;
-  }
   if (j.status === "completed" || j.status === "error" || j.status === "cancelled") {
     if (j.status === "completed") sndDone();
     if (j.status === "error") toast(`Download failed: ${j.error || "unknown"}`);
@@ -157,13 +109,11 @@ void listen("download-progress", (e) => {
   } else {
     downloads.set(j.id, j);
   }
-  // only the small downloads panel changes — never rebuild the whole library
   renderDownloads();
 });
 
 void listen("library-changed", () => {
   void refreshLibrary();
-  void refreshPlaylists();
 });
 
 void listen("engines-updated", (e) => {
@@ -171,14 +121,11 @@ void listen("engines-updated", (e) => {
 });
 
 // --- init ---
-// no right-click context menu in the webview
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 
-// subtle tick on every button press; panel toggles layer their own pop on top
 document.addEventListener("click", (e) => {
   const btn = (e.target as HTMLElement).closest<HTMLElement>("button, .pill, .menu-item");
   if (!btn) return;
-  // range sliders and drag strips are not discrete buttons — stay silent
   if (btn.closest(".seek-wrap")) return;
   sndClick();
 });
@@ -186,17 +133,12 @@ document.addEventListener("click", (e) => {
 refreshIcons();
 initEqualizer();
 void refreshLibrary();
-void refreshPlaylists();
 void loadSettings();
 void (async () => {
   try {
     const jobs = await invoke<JobView[]>("list_downloads");
     for (const j of jobs) {
-      if (j.kind === "playlist") {
-        downloads.delete(j.id);
-        updateGroupHeader(j);
-      } else if (j.group_id) updateGroupTrack(j);
-      else downloads.set(j.id, j);
+      downloads.set(j.id, j);
     }
     renderDownloads();
     renderLibrary();
@@ -205,13 +147,3 @@ void (async () => {
   }
 })();
 setInterval(() => void pollPlayer(), 500);
-let lastQueueSig = "";
-setInterval(() => {
-  if ($("#queue-panel").classList.contains("open")) {
-    const sig = `${state.queue.map((t) => t.id).join(",")}|${state.current ? state.current.id : ""}`;
-    if (sig !== lastQueueSig) {
-      lastQueueSig = sig;
-      renderQueue();
-    }
-  }
-}, 1000);

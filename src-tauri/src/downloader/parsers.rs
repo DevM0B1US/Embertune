@@ -96,41 +96,6 @@ pub(crate) fn spotdl_song_name(s: &str) -> Option<String> {
     best.map(|(_, n)| n)
 }
 
-/// spotdl's simple-tui logs `"{done}/{total} complete"` whenever a song
-/// finishes. Returns the latest (done, total) pair seen.
-pub(crate) fn spotdl_complete(s: &str) -> Option<(usize, usize)> {
-    const SUF: &str = " complete";
-    let bytes = s.as_bytes();
-    let mut best: Option<(usize, (usize, usize))> = None;
-    let mut i = 0;
-    while let Some(rel) = s[i..].find(SUF) {
-        let end = i + rel;
-        let mut k = end;
-        while k > 0 && bytes[k - 1].is_ascii_digit() {
-            k -= 1;
-        }
-        if k == end || k == 0 || bytes[k - 1] != b'/' {
-            i = end + SUF.len();
-            continue;
-        }
-        let total: usize = s[k..end].parse().unwrap_or(0);
-        let mut l = k - 1;
-        while l > 0 && bytes[l - 1].is_ascii_digit() {
-            l -= 1;
-        }
-        if l == k - 1 {
-            i = end + SUF.len();
-            continue;
-        }
-        let done: usize = s[l..k - 1].parse().unwrap_or(0);
-        if total > 0 && best.as_ref().map(|(p, _)| end > *p).unwrap_or(true) {
-            best = Some((end, (done, total)));
-        }
-        i = end + SUF.len();
-    }
-    best.map(|(_, v)| v)
-}
-
 /// spotdl prints `Song already exists.` / `Skipping X (file already exists)` /
 /// `X: Skipped` when a track is already on disk — nothing is downloaded and the
 /// job should be shown as skipped.
@@ -141,53 +106,10 @@ pub(crate) fn spotdl_skipped(s: &str) -> bool {
         || s.contains(": Skipped")
 }
 
-/// Number of distinct skip lines seen so far in a spotdl output buffer. Each
-/// skipped song logs exactly one line, so counting lines (not substrings) gives
-/// an idempotent tally the caller can diff against a previous count to detect
-/// newly-skipped songs without double-counting lines that match several
-/// patterns at once (e.g. "Skipping X (file already exists)").
-pub(crate) fn spotdl_skipped_count(s: &str) -> usize {
-    s.lines()
-        .filter(|l| {
-            let l = l.trim();
-            l.contains(": Skipped")
-                || l.contains("Skipping ")
-                || l.contains("already exists")
-                || l.contains("already downloaded")
-        })
-        .count()
-}
-
 /// yt-dlp prints `[download] <title> has already been downloaded` when the
 /// file is already on disk.
 pub(crate) fn ytdlp_skipped(s: &str) -> bool {
     s.contains("has already been downloaded")
-}
-
-/// yt-dlp prints `[download] Downloading item 3 of 20` before each playlist
-/// track. Returns the latest (current_item, total_items) pair seen.
-pub(crate) fn ytdlp_item(s: &str) -> Option<(usize, usize)> {
-    const MARK: &str = "Downloading item ";
-    let mut best: Option<(usize, (usize, usize))> = None;
-    let mut from = 0;
-    while let Some(rel) = s[from..].find(MARK) {
-        let start = from + rel + MARK.len();
-        let rest = &s[start..];
-        let num_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-        if let Ok(done) = rest[..num_end].parse::<usize>() {
-            let after = &rest[num_end..];
-            if let Some(of) = after.strip_prefix(" of ") {
-                let n2 = of.find(|c: char| !c.is_ascii_digit()).unwrap_or(of.len());
-                if let Ok(total) = of[..n2].parse::<usize>() {
-                    if total > 0 && best.as_ref().map(|(p, _)| start > *p).unwrap_or(true) {
-                        best = Some((start, (done, total)));
-                    }
-                }
-            }
-        }
-        from = start;
-    }
-    best.map(|(_, v)| v)
 }
 
 

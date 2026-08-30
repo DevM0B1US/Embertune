@@ -80,42 +80,6 @@ export interface JobView {
   total: number;
   error: string | null;
   skipped: boolean;
-  group_id: number | null;
-  group_name: string;
-  group_total: number;
-  group_done: number;
-  group_skipped: number;
-  db_playlist: number | null;
-}
-
-export interface PlaylistTrackRow {
-  id: number;
-  title: string;
-  status: string;
-  percent: number;
-  skipped?: boolean;
-  downloaded?: number;
-}
-
-export interface PlaylistGroup {
-  id: number;
-  name: string;
-  kind: string;
-  total: number;
-  done: number;
-  failed: number;
-  skipped: number;
-  finished: boolean;
-  db_playlist: number | null;
-  fallback: boolean;
-  tracks: Map<number, PlaylistTrackRow>;
-}
-
-export interface Playlist {
-  id: number;
-  name: string;
-  created_at: number;
-  track_count: number;
 }
 
 export interface PlayerState {
@@ -128,7 +92,6 @@ export interface PlayerState {
   shuffle: boolean;
   repeat: string;
   speed: number;
-  queue: Track[];
 }
 
 export interface SeekTarget {
@@ -161,16 +124,7 @@ export const state = {
   shuffle: false,
   repeat: "off",
   speed: 1.0,
-  queue: [] as Track[],
 } as PlayerState;
-export let playlists: Playlist[] = [];
-export function setPlaylists(p: Playlist[]): void {
-  playlists = p;
-}
-export let currentPlaylist: { id: number; name: string } | null = null;
-export function setCurrentPlaylist(p: { id: number; name: string } | null): void {
-  currentPlaylist = p;
-}
 export let favOnly = false;
 export function setFavOnly(v: boolean): void {
   favOnly = v;
@@ -187,10 +141,6 @@ export let metaTrack: Track | null = null;
 export function setMetaTrack(t: Track | null): void {
   metaTrack = t;
 }
-export let pendingAddTrack: Track | null = null;
-export function setPendingAddTrack(t: Track | null): void {
-  pendingAddTrack = t;
-}
 export let sleepEnd: number | null = null;
 export function setSleepEnd(v: number | null): void {
   sleepEnd = v;
@@ -205,7 +155,6 @@ export function setLastNowId(v: number | null): void {
 }
 export const artCache = new Map<number, string>();
 export const downloads = new Map<number, JobView>();
-export const playlistGroups = new Map<number, PlaylistGroup>();
 export const dlRate = new Map<number, { t: number; bytes: number; rate: number }>();
 
 export function esc(s: unknown): string {
@@ -404,11 +353,8 @@ $("#prompt-overlay").addEventListener("click", (e) => {
 
 // --- drawers / menus ---
 export function closeMenus(): void {
-  $("#playlists-menu").classList.add("hidden");
-  $("#queue-panel").classList.remove("open");
   $("#lyrics-panel").classList.remove("open");
   $("#eq-panel").classList.remove("open");
-  $("#btn-queue").classList.remove("active");
   $("#btn-lyrics").classList.remove("active");
   $("#btn-eq").classList.remove("active");
 }

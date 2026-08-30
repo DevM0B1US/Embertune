@@ -113,9 +113,7 @@ export function initEqualizer(): void {
     if (open) {
       sndOpen();
       $("#btn-eq").classList.add("active");
-      instantClose($("#queue-panel"), $("#btn-queue"));
       instantClose($("#lyrics-panel"), $("#btn-lyrics"));
-      $("#playlists-menu").classList.add("hidden");
     } else {
       sndClose();
       $("#btn-eq").classList.remove("active");
