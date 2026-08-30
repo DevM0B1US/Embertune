@@ -112,7 +112,7 @@ function renderVisible(): void {
 
 function makeRow(t: Track, curId: number | null, playing: boolean): HTMLLIElement {
   const li = document.createElement("li");
-  li.className = "track";
+  li.className = "track in";
   li.dataset.id = String(t.id);
   if (t.id === curId) {
     li.classList.add("playing");
