@@ -300,30 +300,45 @@ function updateSpeedBtn(): void {
   $("#btn-speed").textContent = label;
 }
 
-// sleep timer
+// sleep timer — standardized + optimized (single timeout + rAF only when open)
+let sleepTimeout: number | undefined;
+let sleepRaf = 0;
 function setSleepTimer(min: number): void {
+  if (sleepTimeout) { clearTimeout(sleepTimeout); sleepTimeout = undefined; }
+  if (sleepRaf) { cancelAnimationFrame(sleepRaf); sleepRaf = 0; }
   setSleepEnd(min ? Date.now() + min * 60000 : null);
   setSleepTotalMin(min || null);
   const sel = String(min);
-  const settingsPills = document.getElementById("sleep-pills");
-  if (settingsPills) {
-    settingsPills.querySelectorAll(".pill").forEach((p) =>
-      (p as HTMLElement).classList.toggle("active", (p as HTMLElement).dataset.min === sel));
-  }
-  $("#sleep-pills-pop").querySelectorAll(".pill").forEach((p) =>
+  // support both old .pill and new .sleep-opt
+  document.querySelectorAll("#sleep-pills-pop .sleep-opt, #sleep-pills-pop .pill").forEach((p) =>
     (p as HTMLElement).classList.toggle("active", (p as HTMLElement).dataset.min === sel));
+  const sP = document.getElementById("sleep-pills");
+  if (sP) sP.querySelectorAll(".pill").forEach((p) => (p as HTMLElement).classList.toggle("active", (p as HTMLElement).dataset.min === sel));
   void invoke("set_sleep_timer", { minutes: min || null });
+  if (min) {
+    const ms = min * 60000;
+    sleepTimeout = window.setTimeout(() => {
+      setSleepEnd(null);
+      setSleepTotalMin(null);
+      updateSleepRing();
+      stopSleepRing();
+      if (state.playing) void invoke("toggle_play");
+      toast("Sleep timer — paused");
+    }, ms);
+    startSleepRing();
+  } else {
+    stopSleepRing();
+  }
   toast(sleepEnd ? `Sleep timer: ${min} min` : "Sleep timer off");
   updateSleepRing();
+  refreshIcons();
 }
-
-const CLOCK_C = 339.3;
 function updateSleepRing(): void {
   const timeEl = document.getElementById("sleep-time");
-  const arc = document.querySelector("#sleep-pop .clock-arc") as SVGCircleElement | null;
+  const bar = document.getElementById("sleep-bar-fill") as HTMLElement | null;
   if (!sleepEnd || !sleepTotalMin) {
     if (timeEl) timeEl.textContent = "—";
-    if (arc) arc.style.strokeDashoffset = String(CLOCK_C);
+    if (bar) bar.style.width = "0%";
     return;
   }
   const remain = Math.max(0, sleepEnd - Date.now());
@@ -332,39 +347,83 @@ function updateSleepRing(): void {
   const ss = totalSecs % 60;
   if (timeEl) timeEl.textContent = `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
   const frac = remain / (sleepTotalMin * 60000);
-  if (arc) arc.style.strokeDashoffset = String(CLOCK_C * (1 - Math.min(1, frac)));
+  if (bar) bar.style.width = `${Math.max(0, Math.min(100, frac * 100))}%`;
+}
+function startSleepRing(): void {
+  if (sleepRaf) cancelAnimationFrame(sleepRaf);
+  sleepRaf = requestAnimationFrame(function loop() {
+    sleepRaf = 0;
+    updateSleepRing();
+    if (sleepEnd && document.getElementById("sleep-pop")?.classList.contains("open")) {
+      sleepRaf = requestAnimationFrame(loop);
+    }
+  });
+}
+function stopSleepRing(): void {
+  if (sleepRaf) { cancelAnimationFrame(sleepRaf); sleepRaf = 0; }
+}
+function updateSleepBtn(): void {
+  // kept for pollPlayer compat — expiry now handled by setTimeout, just update ring
+  if (!sleepEnd) return;
+  if (Date.now() >= sleepEnd) {
+    if (sleepTimeout) { clearTimeout(sleepTimeout); sleepTimeout = undefined; }
+    setSleepEnd(null);
+    setSleepTotalMin(null);
+    updateSleepRing();
+    stopSleepRing();
+    if (state.playing) void invoke("toggle_play");
+    toast("Sleep timer — paused");
+  }
 }
 
-const sleepPop = $("#sleep-pop");
-$("#btn-sleep").addEventListener("click", (e) => {
+const sleepPop = document.getElementById("sleep-pop") as HTMLElement | null;
+const btnSleep = document.getElementById("btn-sleep") as HTMLElement | null;
+if (btnSleep && sleepPop) {
+  btnSleep.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const willOpen = !sleepPop.classList.contains("open");
+    sleepPop.classList.toggle("open", willOpen);
+    if (willOpen) {
+      updateSleepRing();
+      if (sleepEnd) startSleepRing();
+      try { refreshIcons(); } catch {}
+    } else {
+      stopSleepRing();
+    }
+  });
+  console.log("[sleep] btn-sleep listener attached");
+} else {
+  console.error("[sleep] btn or pop not found", !!btnSleep, !!sleepPop);
+}
+(document.getElementById("sleep-close") as HTMLElement | null)?.addEventListener("click", (e) => {
   e.stopPropagation();
-  sleepPop.classList.toggle("open");
-  if (sleepPop.classList.contains("open")) updateSleepRing();
+  const pop = document.getElementById("sleep-pop") as HTMLElement | null;
+  if (!pop) return;
+  pop.classList.remove("open");
+  stopSleepRing();
+});
+$("#sleep-pills-pop").addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest(".sleep-opt, .pill") as HTMLElement | null;
+  if (!btn || btn.dataset.min === undefined) return;
+  setSleepTimer(Number(btn.dataset.min));
+});
+$("#sleep-custom-set").addEventListener("click", () => {
+  const inp = $("#sleep-custom-input") as HTMLInputElement;
+  const v = parseInt(inp.value, 10);
+  if (!v || v < 1 || v > 480) { toast("Enter 1–480 minutes"); return; }
+  setSleepTimer(v);
+});
+$("#sleep-custom-input").addEventListener("keydown", (e) => {
+  if ((e as KeyboardEvent).key === "Enter") ($("#sleep-custom-set") as HTMLElement).click();
 });
 document.addEventListener("click", (e) => {
   if (!sleepPop.classList.contains("open")) return;
   const t = e.target as HTMLElement;
-  if (!sleepPop.contains(t) && !$("#btn-sleep").contains(t)) sleepPop.classList.remove("open");
-});
-$("#sleep-pills-pop").addEventListener("click", (e) => {
-  const pill = (e.target as HTMLElement).closest(".pill") as HTMLElement | null;
-  if (!pill || pill.dataset.min === undefined) return;
-  setSleepTimer(Number(pill.dataset.min));
-});
-
-function updateSleepBtn(): void {
-  if (!sleepEnd) return;
-  const remain = Math.round((sleepEnd - Date.now()) / 60000);
-  if (remain <= 0) {
-    setSleepEnd(null);
-    setSleepTotalMin(null);
-    updateSleepRing();
-    if (state.playing) void invoke("toggle_play");
-    toast("Sleep timer — paused");
-  } else {
-    updateSleepRing();
+  if (!sleepPop.contains(t) && !$("#btn-sleep").contains(t)) {
+    sleepPop.classList.remove("open");
+    stopSleepRing();
   }
-}
+});
 
 // keyboard shortcuts
 document.addEventListener("keydown", (e) => {
@@ -493,8 +552,6 @@ export async function pollPlayer(): Promise<void> {
 
   if (state.current && state.current.id !== lastNowId) {
     setLastNowId(state.current.id);
-    toast(`${state.current.title}${state.current.artist ? ` — ${state.current.artist}` : ""}`);
-    notify(state.current.title, state.current.artist || "");
     const nowEl = $("#now");
     nowEl.classList.remove("now-in");
     void nowEl.offsetWidth;

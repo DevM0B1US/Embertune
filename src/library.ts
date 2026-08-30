@@ -71,6 +71,8 @@ export async function refreshLibrary(): Promise<void> {
 
 export function renderLibrary(): void {
   shownTracks = applyViewFilter(tracks);
+  _lastMarkedId = null;
+  _lastMarkedPlaying = false;
   const activeDls = downloads.size;
   const empty = document.getElementById("empty-library") as HTMLElement;
   empty.classList.toggle("hidden", shownTracks.length > 0 || activeDls > 0);
@@ -156,7 +158,11 @@ function renderVirtualWindow(): void {
     observeRowArt(li, t);
   }
   list.replaceChildren(frag);
-  if (performance.now() - lastRefreshIcons > 120) {
+  // Safety net: reveal any tracks the IO missed (already in viewport on mount)
+  requestAnimationFrame(() => {
+    list.querySelectorAll<HTMLElement>(".track:not(.in)").forEach((el) => el.classList.add("in"));
+  });
+  if (performance.now() - lastRefreshIcons > 300) {
     lastRefreshIcons = performance.now();
     requestAnimationFrame(() => refreshIcons());
   }
@@ -212,21 +218,24 @@ function observeRowArt(li: HTMLElement, t: Track): void {
   rowArtObserver.observe(li);
 }
 
-// Optimized markPlayingRow — only scans visible virtual rows (max ~40) not full N
+let _lastMarkedId: string | null = null;
+let _lastMarkedPlaying = false;
 export function markPlayingRow(): void {
   const cur = state.current ? String(state.current.id) : null;
   const playing = !!state.playing;
-  const rows = listEl().querySelectorAll<HTMLElement>(".track");
-  // fast path: if total large, query is cheap (only visible)
-  rows.forEach((row) => {
-    const isCur = cur !== null && row.dataset.id === cur;
-    // avoid toggle if already correct
-    const hasPlaying = row.classList.contains("playing");
-    if (isCur !== hasPlaying) row.classList.toggle("playing", isCur);
-    const hasPaused = row.classList.contains("paused");
-    const shouldPaused = isCur && !playing;
-    if (shouldPaused !== hasPaused) row.classList.toggle("paused", shouldPaused);
-  });
+  if (cur === _lastMarkedId && playing === _lastMarkedPlaying) return;
+  const prevId = _lastMarkedId;
+  _lastMarkedId = cur;
+  _lastMarkedPlaying = playing;
+  const list = listEl();
+  if (prevId && prevId !== cur) {
+    const prev = list.querySelector<HTMLElement>(`.track[data-id="${prevId}"]`);
+    if (prev) { prev.classList.remove("playing", "paused"); }
+  }
+  if (cur) {
+    const row = list.querySelector<HTMLElement>(`.track[data-id="${cur}"]`);
+    if (row) { row.classList.toggle("paused", !playing); row.classList.add("playing"); }
+  }
 }
 
 async function loadRowArt(t: Track, li: HTMLElement): Promise<void> {

@@ -22,13 +22,13 @@
           <button id="add-btn" class="btn primary">Add</button>
           <div class="topbar-sep"></div>
           <button id="local-btn" class="btn" title="Add local files from disk">Add files</button>
-          <button id="btn-lyrics" class="tbtn topbtn" title="Lyrics" aria-label="Lyrics">
+          <button id="btn-lyrics" class="tbtn topbtn" title="Lyrics" aria-label="Lyrics" data-tauri-drag-region="false">
             <i data-lucide="Mic" width="16" height="16"></i>
           </button>
-          <button id="btn-sleep" class="tbtn topbtn" title="Sleep timer" aria-label="Sleep timer">
+          <button id="btn-sleep" class="tbtn topbtn" title="Sleep timer" aria-label="Sleep timer" data-tauri-drag-region="false">
             <i data-lucide="Timer" width="16" height="16"></i>
           </button>
-          <button id="btn-settings" class="tbtn topbtn" title="Settings" aria-label="Settings">
+          <button id="btn-settings" class="tbtn topbtn" title="Settings" aria-label="Settings" data-tauri-drag-region="false">
             <i data-lucide="Settings" width="16" height="16"></i>
           </button>
           <div class="win-controls hidden" id="win-controls">
@@ -43,28 +43,27 @@
             </button>
           </div>
           <div id="sleep-pop">
-            <div class="sleep-dial">
-              <svg class="sleep-clock" viewBox="0 0 120 120">
-                <defs>
-                  <linearGradient id="sleep-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stop-color="#ff6b35"></stop>
-                    <stop offset="100%" stop-color="#ff9a5c"></stop>
-                  </linearGradient>
-                </defs>
-                <circle class="clock-track" cx="60" cy="60" r="54"></circle>
-                <circle class="clock-arc" cx="60" cy="60" r="54"></circle>
-              </svg>
-              <div class="sleep-dial-label">
-                <span id="sleep-time">—</span>
-                <span class="sleep-caption">sleep timer</span>
-              </div>
+            <div class="sleep-head">
+              <div class="sleep-head-title"><i data-lucide="Timer" width="14" height="14"></i> Sleep timer</div>
+              <button id="sleep-close" class="tbtn" title="Close"><i data-lucide="X" width="14" height="14"></i></button>
             </div>
-            <div class="pill-row sleep-pills" id="sleep-pills-pop">
-              <button class="pill" data-min="0">Off</button>
-              <button class="pill" data-min="15">15m</button>
-              <button class="pill" data-min="30">30m</button>
-              <button class="pill" data-min="45">45m</button>
-              <button class="pill" data-min="60">1h</button>
+            <div class="sleep-count">
+              <div class="sleep-time-row">
+                <span id="sleep-time">—</span>
+                <span class="sleep-remaining">remaining</span>
+              </div>
+              <div class="sleep-bar"><div id="sleep-bar-fill"></div></div>
+            </div>
+            <div class="sleep-options" id="sleep-pills-pop">
+              <button class="sleep-opt" data-min="0"><span>Off</span></button>
+              <button class="sleep-opt" data-min="15"><span>15 minutes</span></button>
+              <button class="sleep-opt" data-min="30"><span>30 minutes</span></button>
+              <button class="sleep-opt" data-min="45"><span>45 minutes</span></button>
+              <button class="sleep-opt" data-min="60"><span>1 hour</span></button>
+            </div>
+            <div class="sleep-custom">
+              <input id="sleep-custom-input" type="number" min="1" max="480" placeholder="Custom minutes" />
+              <button id="sleep-custom-set" class="btn">Set</button>
             </div>
           </div>
         </header>
