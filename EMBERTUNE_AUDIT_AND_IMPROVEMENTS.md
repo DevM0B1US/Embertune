@@ -321,3 +321,94 @@ row animations) before sampling:
   12/12 visible rows with art.
 
 DOM row count stayed at ~32 for a 20 000-track library in every scenario.
+
+## 11. Post-delivery Addendum 2 — Cover-Art Transport, Scroll Feel & Fullscreen Lyrics
+
+**User report after v2:** the stagger is great, but (a) fast scrolling shows
+"flashies", (b) the list still feels laggy on the 124-song library, (c) the
+one-by-one entrance should also play *while scrolling*, (d) scroll should feel
+smoother, (e) fullscreen lyrics squares off the main panel's rounded outline.
+
+### 11.1 Lag spikes — root cause found: base64 cover art over IPC
+
+`get_art` returned `data:image/jpeg;base64,…`. For every cover the pipeline was:
+DB read → disk read → **base64-encode in Rust** → **megabytes-scale IPC string** →
+**main-thread base64 decode** → **main-thread JPEG decode**. Repeat per row entering
+the preload margin and you get exactly the periodic frame drops on a 124-song
+library (the browser dev mock returns tiny SVGs and hides this path entirely).
+
+**Fix — `art://` custom URI scheme protocol** (`src-tauri/src/lib.rs`):
+
+- the webview now loads covers as `art://localhost/<track_id>` (Windows:
+  `http://art.localhost/<id>`): a normal async image fetch — network + decode off
+  the main thread, HTTP-cached by the webview (`Cache-Control: max-age=86400`);
+- the handler resolves *id → path → art-cache file* through the DB inside the
+  app process, so the webview never supplies a filesystem path (same trust model
+  as the old command; malformed/unknown ids 404);
+- CSP `img-src` extended with `art: http://art.localhost`;
+- frontend: new shared resolver `src/lib/art.ts` (protocol URL inside Tauri,
+  mocked IPC in the browser dev harness), session negative-cache for missing
+  covers, art LRU raised to 512 (entries are URLs now, not base64 payloads).
+
+The old base64 `get_art` command remains as the dev-harness fallback only.
+
+### 11.2 "Flashies" during fast scrolling
+
+Two independent sources:
+
+1. **Cover pop-in storms.** The v2 deferral queued *every* art load during a
+   gesture; after a fling the queue flushed in chunks — covers visibly popping
+   in one after another. Policy reworked in `TrackRow.tsx`: rows **inside the
+   viewport load immediately, even mid-gesture** (an IntersectionObserver
+   `intersectionRect` distinguishes viewport rows from the 600 px prefetch
+   ring; the ring still waits for ~150 ms of scroll idle). With the `art://`
+   transport those in-viewport loads cost the main thread nothing.
+2. **Abrupt row entrances.** Scroll-in rows faded in with a zero-delay 80 ms
+   pop — many rows at once read as flashing. Replaced (below).
+
+### 11.3 One-by-one entrance restored for scrolling — safely
+
+The v1 "rows load late" bug was an *unbounded* stagger. The v3 scroll-in
+entrance is a **batch-anchored micro-cascade**: 14 ms per row, hard-capped at
+120 ms, and every mount batch re-anchors after a 60 ms gap — delays can
+physically never accumulate across a session. Safety margin: rows mount ~10
+rows (≈560 px) below the viewport; even a violent 3000 px/s fling needs ~190 ms
+to reach them, so the ≤120 ms hold is always spent off-screen — but the eye
+still sees rows appearing one by one.
+
+### 11.4 Smoother wheel glide
+
+`smoothwheel.ts` time constant raised 55 ms → 68 ms (softer glide, still
+tight to the wheel) and notch gain 1.12 → 1.15. All safety interlocks
+(scrollbar drag, keyboard resync, pinch-zoom, nested scrollers,
+reduced-motion) unchanged.
+
+### 11.5 Fullscreen lyrics outline
+
+`#lyrics-panel.fs` now carries the app frame's own outline — 2 px accent
+border with a 12 px radius (`#app`'s 14 px outer minus its 2 px border) — so
+the fullscreen lyrics panel continues the main panel's rounded frame instead
+of squaring off its corners (the composited backdrop-filter layer can escape
+ancestor radius clipping; the panel now brings its own curve).
+
+### 11.6 Verification (headless Chromium via the dev harness)
+
+20/20 checks pass on the updated suite (`scripts/verify_scroll_fix.mjs`):
+cascade + scroll-in micro-cascade present and capped (max 320 ms cold / 120 ms
+scroll), **no delay accumulation over a 20-fling session** (the v1 bug's exact
+signature), batch re-anchoring, viewport fully opaque after every scenario
+(fling, long session, search, teleport, mega-fling), DOM bounded (~32 rows @
+20 k tracks), smoothwheel glide, **0 long-task frame spikes during wheel
+scrolling at 124 tracks**, 9/9 in-view rows with art, zero console errors.
+
+*Test-harness note:* trusted CDP wheel events cannot drive the lerp in
+headless — Chromium starves BeginFrames after a preventDefaulted wheel
+gesture (2 rAF ticks in 1.4 s). The suite therefore drives the same code path
+(listener → preventDefault → target → lerp → virtualizer) with synthetic
+`WheelEvent`s; real WebKitGTK/WebView2 windows pump frames continuously and
+are unaffected.
+
+*Rust note:* the `art://` handler was written against Tauri 2's
+`register_asynchronous_uri_scheme_protocol` API; this environment has no Rust
+toolchain, so run `cargo check`/`cargo tauri dev` on the dev machine to
+compile-verify (`src-tauri/src/lib.rs`).
