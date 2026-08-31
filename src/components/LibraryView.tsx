@@ -30,7 +30,6 @@ export default function LibraryView() {
   let searchDebounce: number | undefined;
   onCleanup(() => clearTimeout(searchDebounce));
 
-  // search — debounced 120ms, identical to the vanilla build
   const onSearchInput = () => {
     clearTimeout(searchDebounce);
     searchDebounce = window.setTimeout(() => {
@@ -52,22 +51,20 @@ export default function LibraryView() {
 
   return (
     <section id="view-library" class="view" ref={viewEl}>
-      <div class="view-head">
-        <span id="lib-title" class="section-label">
-          {libTitle()}
-        </span>
-        <div class="lib-actions">
+      <div class="lib-bar">
+        <span class="lib-bar-title">{libTitle()}</span>
+        <div class="lib-bar-controls">
           <input
             ref={searchInp}
             id="search"
+            class="lib-bar-search"
             type="text"
             placeholder="Search…"
             spellcheck={false}
             onInput={onSearchInput}
           />
           <button
-            id="btn-sort"
-            class="tbtn sort-btn"
+            class="lib-bar-sort"
             title={`Sort: ${sortLabel()}`}
             data-sort={sortBy()}
             onClick={cycleSort}
@@ -75,8 +72,7 @@ export default function LibraryView() {
             {sortLabel()}
           </button>
           <button
-            id="btn-fav"
-            class="tbtn topbtn"
+            class="lib-bar-fav"
             title="Favorites only"
             aria-label="Favorites only"
             classList={{ active: favOnly() }}
@@ -85,7 +81,7 @@ export default function LibraryView() {
               invalidateView(true);
             }}
           >
-            <Ico node={Heart} size={16} />
+            <Ico node={Heart} size={15} />
           </button>
         </div>
       </div>

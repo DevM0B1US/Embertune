@@ -79,8 +79,8 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
   .view {
     padding: 12px 14px;
   }
-  .view-head {
-    padding: 10px 14px;
+  .lib-bar {
+    padding: 0;
   }
   #player {
     gap: 14px;
@@ -98,8 +98,8 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
   .topbar-sep {
     display: none;
   }
-  .lib-actions #search {
-    max-width: 130px;
+  .lib-bar-search {
+    width: 130px;
   }
   #local-btn {
     display: none;
@@ -149,11 +149,11 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
     height: 40px;
     margin-right: 10px;
   }
-  .lib-actions {
+  .lib-bar-controls {
     gap: 6px;
   }
-  .lib-actions #search {
-    max-width: 110px;
+  .lib-bar-search {
+    width: 110px;
   }
   .view {
     padding: 10px 12px;
@@ -173,7 +173,7 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
   .speed-btn {
     padding: 0 7px;
   }
-  .lib-actions #search {
+  .lib-bar-search {
     display: none;
   }
 }

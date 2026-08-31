@@ -11,16 +11,6 @@
   </head>
   <body>
     <div id="app"></div>
-    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-      <defs>
-        <filter id="worm-filter" x="-10%" y="-40%" width="120%" height="180%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.02 0.1" numOctaves="2" seed="7" result="n" />
-          <feDisplacementMap in="SourceGraphic" in2="n" scale="8" xChannelSelector="R" yChannelSelector="G">
-            <animate attributeName="scale" dur="1.8s" values="3;9;3" repeatCount="indefinite" />
-          </feDisplacementMap>
-        </filter>
-      </defs>
-    </svg>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>

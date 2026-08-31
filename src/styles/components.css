@@ -278,7 +278,7 @@
 .del-btn:active,
 .heart-btn:active,
 .edit-btn:active,
-.sort-btn:active,
+.lib-bar-sort:active,
 .speed-btn:active {
   transform: scale(0.94);
 }
@@ -292,13 +292,10 @@
 .view {
   position: relative;
   flex: 1;
-  overflow-y: auto;
+  overflow-y: scroll;
   padding: 0;
   -webkit-overflow-scrolling: touch;
   scrollbar-gutter: stable;
-  will-change: scroll-position;
-  /* NOTE: no scroll-behavior:smooth here — programmatic scrollTop writes
-     (virtual list, wheel smoother) must be instant or they stack into jank */
 }
 
 .hidden {
@@ -314,41 +311,32 @@
 }
 
 /* --- library --- */
-/* #track-list is a positioning context with an explicit pixel height
-   (set from JS = n * --row-h). Rows are absolutely positioned shells —
-   entering/leaving rows never reflow siblings, so huge libraries stay
-   smooth. Paint containment isolates row churn from the rest of the app. */
+/* track list */
 #track-list {
   list-style: none;
-  position: relative;
   margin: 0;
+  padding: 0;
   border-radius: 8px;
-  overflow: hidden;
-  contain: layout paint;
 }
 
-/* row shell — positioning only */
+/* row */
 #track-list .track {
-  position: absolute;
-  top: 0;
-  left: 0;
   width: 100%;
-  height: var(--row-h);
   margin: 0;
 }
 
-/* visual row — inner wrapper so entrance animations never fight the
-   positional transform on the shell */
+/* visual row */
 .trow {
   display: flex;
   align-items: center;
   gap: 14px;
-  height: 100%;
+  height: var(--row-h);
   padding: 0 12px;
   border-bottom: 1px solid var(--border-soft);
   background: rgba(255, 255, 255, 0.02);
   cursor: pointer;
   position: relative;
+  transition: background 0.18s ease;
 }
 
 #track-list .track:hover .trow {
@@ -401,8 +389,8 @@
   );
 }
 
-/* the ember — a soft glow that lives at the play button and gently breathes,
-   like a coal, not a sweeping wave */
+/* the ember — a soft static glow at the play button (animation removed:
+   constant per-frame repaints while playing killed the WebKitGTK scrollbar) */
 .track.playing .trow::before {
   content: "";
   position: absolute;
@@ -420,20 +408,7 @@
     rgba(255, 154, 92, 0.14) 50%,
     transparent 64%
   );
-  animation: ember-breathe 7s ease-in-out infinite;
   pointer-events: none;
-  will-change: transform, opacity;
-}
-
-@keyframes ember-breathe {
-  0%, 100% {
-    transform: translateX(-1.5%);
-    opacity: 0.72;
-  }
-  50% {
-    transform: translateX(1.5%);
-    opacity: 0.88;
-  }
 }
 
 .track.playing .track-title {
@@ -519,21 +494,89 @@
   color: var(--err);
 }
 
-.view-head {
+/* --- library bar --- */
+.lib-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  padding: 10px 20px 0;
   margin-bottom: 10px;
 }
 
-.section-label {
+.lib-bar-title {
   font-size: 10.5px;
   font-family: var(--mono);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--fg-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
+
+.lib-bar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.lib-bar-search {
+  width: 150px;
+  height: 30px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  padding: 0 10px;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  flex-shrink: 0;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.lib-bar-search::placeholder { color: var(--fg-faint); }
+.lib-bar-search:focus {
+  border-color: rgba(255, 107, 53, 0.55);
+  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+}
+
+.lib-bar-sort {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 10px;
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.lib-bar-sort:hover { background: var(--bg-3); color: var(--fg); }
+.lib-bar-sort:active { transform: scale(0.94); }
+
+.lib-bar-fav {
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+.lib-bar-fav:hover { background: var(--bg-3); color: var(--fg); transform: scale(1.08); }
+.lib-bar-fav:active { transform: scale(0.92); }
+.lib-bar-fav.active { color: var(--accent); background: rgba(255, 107, 53, 0.08); border-color: rgba(255, 107, 53, 0.25); }
+.lib-bar-fav.active svg { fill: var(--accent); stroke: var(--accent); }
 
 /* --- settings overlay --- */
 #settings-overlay {
@@ -896,14 +939,14 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-left: 6px;
+  margin-left: auto;
   flex-shrink: 0;
 }
 
 .win-btn {
-  width: 26px;
-  height: 26px;
-  display: inline-flex;
+  width: 26px !important;
+  height: 26px !important;
+  display: inline-flex !important;
   align-items: center;
   justify-content: center;
 }
@@ -1189,39 +1232,7 @@
   transform: scaleX(0);
   border-radius: 6px;
   background: linear-gradient(90deg, #8a2d0c, var(--accent) 55%, #ffd166);
-  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: transform;
 }
-/* worm turbulence only when actually playing — saves GPU when paused/hidden */
-#player.playing #seek-fill {
-  filter: url(#worm-filter);
-  animation: ember-glow 2.4s ease-in-out infinite;
-}
-#player:not(.playing) #seek-fill {
-  filter: none;
-  animation: none;
-}
-
-#seek-fill::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 6px;
-  background: linear-gradient(90deg, transparent, rgba(255, 238, 200, 0.5), transparent);
-  background-size: 200% 100%;
-  animation: ember-sheen 1.9s linear infinite;
-}
-
-@keyframes ember-glow {
-  0%, 100% { box-shadow: 0 0 8px rgba(255, 107, 53, 0.35); }
-  50% { box-shadow: 0 0 16px rgba(255, 107, 53, 0.6); }
-}
-
-@keyframes ember-sheen {
-  from { background-position: 120% 0; }
-  to { background-position: -120% 0; }
-}
-
 #seek-knob {
   position: absolute;
   top: 50%;
@@ -1348,6 +1359,9 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 .topbtn {
   border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .topbtn svg {
@@ -1379,56 +1393,6 @@ input[type="range"]::-webkit-slider-thumb:hover {
   font-weight: 800;
   display: grid;
   place-items: center;
-}
-
-/* --- library header --- */
-.lib-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-
-.lib-actions #search {
-  width: 170px;
-  background: var(--bg-2);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  padding: 8px 14px;
-  color: var(--fg);
-  font-size: 13px;
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.lib-actions #search::placeholder {
-  color: var(--fg-faint);
-}
-
-.lib-actions #search:focus {
-  border-color: rgba(255, 107, 53, 0.55);
-  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
-}
-
-.sort-btn {
-  width: auto;
-  height: 33px;
-  padding: 0 12px;
-  border-radius: 8px;
-  font-size: 11px;
-  font-family: var(--mono);
-  letter-spacing: 0.06em;
-  color: var(--fg-dim);
-  white-space: nowrap;
-}
-
-.sort-btn:hover {
-  color: var(--fg);
-}
-
-#btn-fav.active svg {
-  fill: var(--accent);
-  stroke: var(--accent);
 }
 
 /* --- track rows --- */
