@@ -14,7 +14,7 @@ yt-dlp and spotdl as bundled sidecar engines, libmpv for playback.
 ## Stack
 
 - **App shell:** Tauri 2 (Rust backend, system webview frontend)
-- **Frontend:** vanilla JS + Vite (no framework weight for an MVP)
+- **Frontend:** SolidJS + Vite + TypeScript (fine-grained reactivity, virtualized library list)
 - **Download engines:** yt-dlp, spotdl — spawned as managed subprocesses,
   progress parsed from stdout/stderr, forwarded to UI as events
 - **Playback:** mpv spawned with `--input-ipc-server` (JSON IPC socket), driven

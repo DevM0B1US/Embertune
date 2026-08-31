@@ -3,14 +3,13 @@
 A Linux music player + playlist ripper. Paste a YouTube or Spotify track/playlist
 URL, download it into your library, and play it back — all in one app.
 
-Built with **Tauri 2** (Rust core, system webview UI). Download engines are
-sidecar CLIs — **yt-dlp** and **spotdl** — and playback is handled by **mpv**
-over its JSON IPC socket (no bundled decoders).
+Built with **Tauri 2** (Rust core, SolidJS + TypeScript webview UI). Download
+engines are sidecar CLIs — **yt-dlp** and **spotdl** — and playback is handled
+by **mpv** over its JSON IPC socket (no bundled decoders).
 
 ## Features
 
 - Paste YouTube / Spotify links into the URL bar — tracks or playlists, one per line — each queues automatically and downloads one at a time
-- **Playlist downloads** — pasting a YouTube or Spotify playlist URL resolves it into its tracks and downloads them one by one, tracked live in a dedicated playlist panel: playlist name, per-track status, a done/total counter and progress bar, plus Cancel/Open/Dismiss (YouTube playlists via yt-dlp, Spotify playlists via the Spotify Web API). Every download lands both in the main library (playable the moment each track finishes) and in an auto-created playlist collection named after it. If a playlist can't be enumerated, it falls back to a single whole-playlist download.
 - Live per-download progress bars
 - **Themes** — glass (transparent), flat dark, and light mode, switchable in Settings
 - Browse library, play / pause / next / prev / seek, volume

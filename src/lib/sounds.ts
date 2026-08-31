@@ -1,11 +1,7 @@
 // Tiny synthesized WebAudio pops; no assets, one shared context.
 const sndState: { ctx: AudioContext | null } = { ctx: null };
-export let sndEnabled = localStorage.getItem("embertune.sound") !== "off";
+const sndEnabled = localStorage.getItem("embertune.sound") !== "off";
 const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-export function setSndEnabled(v: boolean): void {
-  sndEnabled = v;
-}
 
 function sndResume(): void {
   try {

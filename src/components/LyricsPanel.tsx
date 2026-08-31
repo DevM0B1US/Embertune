@@ -17,6 +17,9 @@ export default function LyricsPanel() {
   const [plainText, setPlainText] = createSignal<string | null>(null);
   const [activeIdx, setActiveIdx] = createSignal(-1);
 
+  // row elements captured via refs — no per-line DOM queries
+  let lineEls: HTMLElement[] = [];
+
   let lrcReq = 0;
   let lrcScrollRaf = 0;
   let lrcLastAuto = 0;
@@ -57,8 +60,7 @@ export default function LyricsPanel() {
 
     // keep the active line centered without scrolling unless it drifts
     // out of the band — most line-to-line advances never scroll
-    const all = box.querySelectorAll<HTMLElement>(".lrc-line");
-    const el = all[cur];
+    const el = lineEls[cur];
     if (!el) return;
     const bigJump = prev < 0 || cur - prev > 2;
     const elTop = el.offsetTop - box.offsetTop;
@@ -198,7 +200,12 @@ export default function LyricsPanel() {
         <div ref={box} id="lyrics-text" class="lyrics-text" onScroll={onBoxScroll}>
           <For each={lrcLines()}>
             {(l, i) => (
-              <div class="lrc-line" classList={{ active: activeIdx() === i() }} data-t={l.t}>
+              <div
+                ref={(el) => (lineEls[i()] = el)}
+                class="lrc-line"
+                classList={{ active: activeIdx() === i() }}
+                data-t={l.t}
+              >
                 {l.text || "♪"}
               </div>
             )}

@@ -197,38 +197,6 @@
   box-shadow: none;
 }
 
-.btn-cog {
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  align-self: center;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--fg-dim);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s, transform 0.12s;
-}
-
-.btn-cog:hover {
-  background: var(--bg-2);
-  color: var(--fg);
-}
-
-.btn-cog:active {
-  transform: scale(0.94);
-}
-
-.btn-cog.active {
-  color: var(--accent);
-  background: rgba(255, 107, 53, 0.08);
-}
-
-.btn-cog svg {
-  display: block;
-}
 
 .btn {
   display: inline-flex;
@@ -283,9 +251,7 @@
   transform: scale(0.94);
 }
 
-.pill:active,
-.menu-item:active,
-.pl-act:active {
+.pill:active {
   transform: scale(0.96);
 }
 
@@ -754,10 +720,6 @@
   gap: 8px;
 }
 
-#prompt-overlay.confirm #prompt-input {
-  display: none;
-}
-
 .settings-card h2 {
   font-size: 11.5px;
   font-weight: 600;
@@ -1173,6 +1135,7 @@
   min-width: 0;
   display: flex;
   align-items: center;
+  overflow: hidden;
 }
 
 #now-title {
@@ -1257,18 +1220,7 @@
   border-color: var(--accent-2);
 }
 
-#now {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-
-#now-title {
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-/* --- seek (worm) --- */
+/* --- seek --- */
 .seek-wrap {
   position: relative;
   flex: 1;
@@ -1365,26 +1317,6 @@ input[type="range"]::-webkit-slider-thumb:hover {
   flex-shrink: 0;
 }
 
-.fade-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.fade-row input[type="range"] {
-  flex: 1;
-  width: auto;
-  min-width: 0;
-}
-
-.fade-label {
-  min-width: 3.5ch;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  font-size: 0.9rem;
-  color: var(--text-dim);
-}
 
 /* --- scrollbar --- */
 ::-webkit-scrollbar {
@@ -1533,9 +1465,6 @@ input[type="range"]::-webkit-slider-thumb:hover {
   contain: layout paint;
 }
 
-.drawer.instant {
-  transition: none;
-}
 
 .drawer.open {
   transform: translateX(0);
@@ -1699,19 +1628,6 @@ input[type="range"]::-webkit-slider-thumb:hover {
   margin-top: 18px;
 }
 
-/* --- settings selects --- */
-.settings-card select {
-  width: 100%;
-  margin-bottom: 8px;
-  background: var(--bg);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  padding: 8px 12px;
-  color: var(--fg);
-  font-size: 13px;
-  outline: none;
-  cursor: pointer;
-}
 
 /* --- toast --- */
 .toast {

@@ -1,4 +1,4 @@
-import { For } from "solid-js";
+import { Index } from "solid-js";
 import { dlList } from "../lib/state/downloads";
 import { dlPercent, dlStatusText, fmtBytes, fmtSpeed } from "../lib/format";
 import type { JobView } from "../lib/types";
@@ -14,21 +14,23 @@ function subText(j: JobView): string {
   return bits.join(" · ");
 }
 
-function DlRow(props: { j: JobView }) {
+function DlRow(props: { j: () => JobView }) {
   const j = props.j;
-  const active = j.status === "queued" || j.status === "downloading";
-  const pct = j.percent < 0 ? 0 : Math.round(j.percent);
+  const pct = () => {
+    const v = j().percent;
+    return v < 0 ? 0 : Math.round(v);
+  };
   return (
     <li class="track dl-row">
       <div class="track-meta">
         <div class="track-title">
-          {active ? <span class="spinner" /> : ""}
-          {j.title || "Resolving…"}
+          {j().status === "queued" || j().status === "downloading" ? <span class="spinner" /> : ""}
+          {j().title || "Resolving…"}
         </div>
-        <div class="track-sub">{subText(j)}</div>
+        <div class="track-sub">{subText(j())}</div>
       </div>
       <div class="dl-progress">
-        <div class="dl-fill" style={{ width: `${pct}%` }} />
+        <div class="dl-fill" style={{ width: `${pct()}%` }} />
       </div>
     </li>
   );
@@ -38,7 +40,9 @@ export default function DownloadsPanel() {
   return (
     <div id="downloads-panel" classList={{ hidden: dlList().length === 0 }}>
       <ul id="dl-list">
-        <For each={dlList()}>{(j) => <DlRow j={j} />}</For>
+        {/* Index (not For): the list is rebuilt every coalesced flush, so
+            rows must update in place instead of being recreated each time */}
+        <Index each={dlList()}>{(j) => <DlRow j={j} />}</Index>
       </ul>
     </div>
   );
