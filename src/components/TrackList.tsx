@@ -145,22 +145,13 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
         () => listEl.classList.remove("scrolling"),
         150
       );
-      // toggle backdrop-filter off during active scroll for cheaper paint
-      document.getElementById("app")?.classList.add("scroll-fast");
-      window.clearTimeout(scrollBackdropTimer);
-      scrollBackdropTimer = window.setTimeout(
-        () => document.getElementById("app")?.classList.remove("scroll-fast"),
-        200
-      );
       setScrollTop(st);
     };
-    let scrollBackdropTimer: number | undefined;
     const onScroll = (): void => sync();
     view.addEventListener("scroll", onScroll, { passive: true });
     onCleanup(() => {
       view.removeEventListener("scroll", onScroll);
       window.clearTimeout(scrollIdleTimer);
-      window.clearTimeout(scrollBackdropTimer);
     });
 
     // ── viewport resizes (window, zoom, panel toggles) ─────────────

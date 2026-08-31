@@ -378,20 +378,28 @@
 /* --- now-playing row: ember burns sideways from the play button --- */
 .track.playing .trow {
   overflow: hidden;
-  background: rgba(255, 107, 53, 0.14);
+  background: linear-gradient(
+    90deg,
+    rgba(255, 107, 53, 0.22) 0%,
+    rgba(255, 138, 70, 0.08) 50%,
+    transparent 85%
+  );
 }
 
-/* the ember — a soft static glow at the play button (animation removed:
-   constant per-frame repaints while playing killed the WebKitGTK scrollbar) */
+/* subtle glow accent at the play button edge — flat, no animation */
 .track.playing .trow::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -50%;
-  right: -50%;
+  left: 0;
+  width: 120px;
   border-radius: inherit;
-  background: rgba(255, 154, 92, 0.12);
+  background: radial-gradient(
+    ellipse at 16px center,
+    rgba(255, 107, 53, 0.15) 0%,
+    transparent 70%
+  );
   pointer-events: none;
 }
 
