@@ -2,6 +2,7 @@ import { Heart } from "lucide";
 import { onCleanup, onMount } from "solid-js";
 import TrackList from "./TrackList";
 import DownloadsPanel from "./DownloadsPanel";
+import { createRowFx, RowFxProvider } from "./rowfx";
 import { Ico } from "../lib/icons";
 import { attachOverlayScrollbar } from "../lib/scrollbar";
 import { attachSmoothWheel } from "../smoothwheel";
@@ -34,6 +35,13 @@ export default function LibraryView() {
   let searchDebounce: number | undefined;
   onCleanup(() => clearTimeout(searchDebounce));
 
+  // one effects instance per list (audit Q2/B4): owns the cascade state
+  // and the artwork IntersectionObserver, and — crucially — disconnects
+  // the observer when this view unmounts so a remount can never observe
+  // against a stale detached root
+  const fx = createRowFx();
+  onCleanup(() => fx.dispose());
+
   onMount(() => {
     // inertial wheel scrolling (WebKitGTK notchy steps) + auto-fade
     // overlay scrollbar; the container stays the native scroller
@@ -63,7 +71,8 @@ export default function LibraryView() {
   const sortLabel = () => SORTS.find(([k]) => k === sortBy())?.[1] || "Newest";
 
   return (
-    <div class="view-shell">
+    <RowFxProvider value={fx}>
+      <div class="view-shell">
       <section id="view-library" class="view" ref={viewEl}>
         <div class="lib-bar">
           <span class="lib-bar-title">{libTitle()}</span>
@@ -115,6 +124,7 @@ export default function LibraryView() {
         </div>
       </section>
       <div ref={thumbEl} class="osb-thumb" />
-    </div>
+      </div>
+    </RowFxProvider>
   );
 }

@@ -13,6 +13,8 @@ import { sndDone } from "../sounds";
 //  flush so components render pure data.
 // ═══════════════════════════════════════════════════════════════════
 
+import { kindOfUrl } from "../urlkind";
+
 const downloadsOwner = createRoot(() => {
   const [dlList, setDlList] = createSignal<JobView[]>([]);
 
@@ -76,7 +78,7 @@ const downloadsOwner = createRoot(() => {
     dlMap.set(id, {
       id,
       url,
-      kind: url.includes("spotify") || url.startsWith("spotify:") ? "spotify" : "youtube",
+      kind: kindOfUrl(url),
       status: "queued",
       title: url,
       percent: -1,

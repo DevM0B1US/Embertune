@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { batch, createMemo, createRoot, createSignal } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import type { Track } from "../types";
+import { mergeTracks, sameTrack } from "../trackmerge";
 
 // ═══════════════════════════════════════════════════════════════════
 //  Library store — tracks, filters, derived views, artwork cache.
@@ -126,30 +127,8 @@ const libraryOwner = createRoot(() => {
   }
 
   // ── actions ───────────────────────────────────────────────────────
-  /** Reuse previous track objects when nothing changed so rows are not
-   *  recreated (no flash) on no-op library refreshes. */
-  function mergeTracks(prev: Track[], next: Track[]): Track[] {
-    if (prev.length === 0) return next;
-    const byId = new Map(prev.map((t) => [t.id, t]));
-    return next.map((t) => {
-      const old = byId.get(t.id);
-      return old && sameTrack(old, t) ? old : t;
-    });
-  }
-
-  function sameTrack(a: Track, b: Track): boolean {
-    return (
-      a.title === b.title &&
-      a.artist === b.artist &&
-      a.album === b.album &&
-      a.duration === b.duration &&
-      a.path === b.path &&
-      a.source === b.source &&
-      a.source_url === b.source_url &&
-      a.added_at === b.added_at &&
-      a.favorite === b.favorite
-    );
-  }
+  // stable-merge helpers live in lib/trackmerge.ts (pure, unit-tested —
+  // audit TE1) and are re-exported below
 
   async function refreshLibrary(): Promise<void> {
     const fresh = await invoke<Track[]>("get_library");
@@ -209,6 +188,9 @@ export const artCache = libraryOwner.artCache;
 export const cacheArt = libraryOwner.cacheArt;
 export const refreshLibrary = libraryOwner.refreshLibrary;
 export const setTrackFavorite = libraryOwner.setTrackFavorite;
+
+/** Stable-merge helpers (lib/trackmerge.ts — pure, unit-tested). */
+export { mergeTracks, sameTrack };
 
 /** Subscribe to backend library change events. */
 export function initLibraryEvents(): () => void {

@@ -95,6 +95,13 @@ const uiOwner = createRoot(() => {
   }
 
   function promptDialog(title: string, opts: PromptOptions = {}): Promise<string | null> {
+    // a second prompt while one is open must not orphan the first
+    // caller's promise (audit B8) — resolve it as if it was dismissed
+    if (promptResolve) {
+      const pending = promptResolve;
+      promptResolve = null;
+      pending(null);
+    }
     setPrompt({
       open: true,
       confirm: false,
@@ -118,6 +125,12 @@ const uiOwner = createRoot(() => {
   }
 
   function confirmDialog(message: string, okText = "Delete"): Promise<boolean> {
+    // same double-open guard as promptDialog (audit B8)
+    if (promptResolve) {
+      const pending = promptResolve;
+      promptResolve = null;
+      pending(null);
+    }
     setPrompt({
       open: true,
       confirm: true,
@@ -233,3 +246,13 @@ export const toastRefs = uiOwner.toastRefs;
 export const toast = uiOwner.toast;
 export const registerSearchInput = uiOwner.registerSearchInput;
 export const focusSearch = uiOwner.focusSearch;
+
+// DEV-only test hook (audit TE1): lets Playwright drive the dialog store
+// directly. Tree-shaken from production builds via import.meta.env.DEV.
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).__embertuneUi = {
+    promptDialog: uiOwner.promptDialog,
+    confirmDialog: uiOwner.confirmDialog,
+    finishPrompt: uiOwner.finishPrompt,
+  };
+}

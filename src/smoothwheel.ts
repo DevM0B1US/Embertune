@@ -74,39 +74,33 @@ export function attachSmoothWheel(el: HTMLElement): () => void {
     }
   };
 
-  el.addEventListener(
-    "wheel",
-    (e: WheelEvent) => {
-      // pinch-zoom and horizontal-only scrolls stay native
-      if (e.ctrlKey || e.deltaY === 0) return;
-      // nested scrollers inside the view keep native behavior
-      const t = e.target as HTMLElement | null;
-      if (t?.closest?.("#downloads-panel")) return;
+  const onWheel = (e: WheelEvent): void => {
+    // pinch-zoom and horizontal-only scrolls stay native
+    if (e.ctrlKey || e.deltaY === 0) return;
+    // nested scrollers inside the view keep native behavior
+    const t = e.target as HTMLElement | null;
+    if (t?.closest?.("#downloads-panel")) return;
 
-      e.preventDefault();
-      let dy = e.deltaY;
-      if (e.deltaMode === 1) dy *= 16;
-      else if (e.deltaMode === 2) dy *= el.clientHeight;
-      dy *= 1.15; // gentle gain — notchy wheels travel a natural distance
+    e.preventDefault();
+    let dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 16;
+    else if (e.deltaMode === 2) dy *= el.clientHeight;
+    dy *= 1.15; // gentle gain — notchy wheels travel a natural distance
 
-      if (raf === 0) target = el.scrollTop; // resync after external scroll
-      const max = maxScroll();
-      target = Math.min(max, Math.max(0, target + dy));
-      lastWheelAt = performance.now();
-      kick();
-    },
-    { passive: false }
-  );
+    if (raf === 0) target = el.scrollTop; // resync after external scroll
+    const max = maxScroll();
+    target = Math.min(max, Math.max(0, target + dy));
+    lastWheelAt = performance.now();
+    kick();
+  };
+  el.addEventListener("wheel", onWheel, { passive: false });
 
   // no animation running → any scroll came from outside (scrollbar,
   // keyboard, programmatic) — keep the target glued to reality
-  el.addEventListener(
-    "scroll",
-    () => {
-      if (raf === 0) target = el.scrollTop;
-    },
-    { passive: true }
-  );
+  const onScroll = (): void => {
+    if (raf === 0) target = el.scrollTop;
+  };
+  el.addEventListener("scroll", onScroll, { passive: true });
 
   const onVisChange = (): void => {
     if (document.hidden) {
@@ -128,6 +122,10 @@ export function attachSmoothWheel(el: HTMLElement): () => void {
 
   return () => {
     stop();
+    // full teardown (audit B7): the wheel/scroll handlers used to survive
+    // the cleanup, relying on GC to collect the whole closure cycle
+    el.removeEventListener("wheel", onWheel);
+    el.removeEventListener("scroll", onScroll);
     document.removeEventListener("visibilitychange", onVisChange);
     reduce.removeEventListener?.("change", mqListener);
   };

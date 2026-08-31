@@ -3,6 +3,17 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+/// Tighten a file to owner-only permissions (audit SE1). No-op on non-Unix.
+/// The settings file carries the Spotify client secret, so it must never be
+/// world-readable regardless of the user's umask.
+#[cfg(unix)]
+fn restrict_perms(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+}
+#[cfg(not(unix))]
+fn restrict_perms(_path: &std::path::Path) {}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub spotify_client_id: Option<String>,
@@ -58,6 +69,9 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     pub fn load(path: PathBuf) -> Self {
+        // Migration: settings written before SE1 may be world-readable.
+        // Tighten as soon as the store opens (best effort).
+        restrict_perms(&path);
         let data = match fs::read_to_string(&path) {
             Ok(s) => match serde_json::from_str::<Settings>(&s) {
                 Ok(settings) => settings,
@@ -77,7 +91,9 @@ impl SettingsStore {
     }
 
     /// Atomic persist: write to a temp file then rename. Prevents corruption
-    /// from crashes mid-write.
+    /// from crashes mid-write. The renamed file is tightened to 0o600 — it
+    /// contains the Spotify client secret (audit SE1), and the rename would
+    /// otherwise inherit the process umask (often world-readable).
     fn persist(&self, settings: &Settings) {
         let s = match serde_json::to_string_pretty(settings) {
             Ok(s) => s,
@@ -85,7 +101,9 @@ impl SettingsStore {
         };
         let tmp = self.path.with_extension("json.tmp");
         if fs::write(&tmp, &s).is_ok() {
+            restrict_perms(&tmp);
             let _ = fs::rename(&tmp, &self.path);
+            restrict_perms(&self.path); // rename may reset ownership/perms on some filesystems
         }
     }
 
@@ -138,6 +156,10 @@ impl SettingsStore {
         self.persist(&d);
     }
 
+    /// No webview surface yet (audit Q6: the set_fade command was removed —
+    /// no fade UI exists). Values remain readable from settings.json and the
+    /// fade poller stays dormant until a UI ships.
+    #[allow(dead_code)]
     pub fn set_fade(&self, enabled: bool, duration: f64) {
         let mut d = self.data.lock().unwrap();
         d.fade_enabled = enabled;
@@ -147,6 +169,9 @@ impl SettingsStore {
         self.persist(&d);
     }
 
+    /// No webview surface yet (audit Q6: the set_effect command was removed
+    /// — no sound-effect UI exists). Kept for future UI.
+    #[allow(dead_code)]
     pub fn set_effect(&self, effect: Option<String>) {
         let mut d = self.data.lock().unwrap();
         if let Some(e) = effect {

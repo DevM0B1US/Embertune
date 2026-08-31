@@ -166,8 +166,10 @@ impl Db {
         .optional()
     }
 
-    /// Batch fetch preserving `ids` order — one query instead of N for the
-    /// player's per-poll state refresh.
+    /// Batch fetch preserving `ids` order. Kept for future batch consumers —
+    /// the player's per-poll state refresh now uses `get_track` directly
+    /// (audit B2/P3: the per-poll full-queue fetch was pure waste).
+    #[allow(dead_code)]
     pub fn get_tracks_by_ids(&self, ids: &[i64]) -> rusqlite::Result<Vec<Track>> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -194,5 +196,82 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM tracks WHERE id = ?1", params![id])?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(n: u32) -> NewTrack {
+        NewTrack {
+            title: format!("Track {n}"),
+            artist: "Artist".into(),
+            album: String::new(),
+            duration: 180,
+            path: format!("/mock/track-{n}.mp3"),
+            source_url: String::new(),
+            source: "local".into(),
+            added_at: 1000 + n as i64,
+        }
+    }
+
+    fn mem_db() -> Db {
+        Db::new(Path::new(":memory:")).expect("in-memory db")
+    }
+
+    #[test]
+    fn add_get_remove_roundtrip() {
+        let db = mem_db();
+        let id = db.add_track(&sample(1)).unwrap();
+        let t = db.get_track(id).unwrap().expect("track exists");
+        assert_eq!(t.title, "Track 1");
+        assert_eq!(t.path, "/mock/track-1.mp3");
+        db.remove_track(id).unwrap();
+        assert!(db.get_track(id).unwrap().is_none());
+    }
+
+    #[test]
+    fn add_track_is_idempotent_per_path() {
+        let db = mem_db();
+        let a = db.add_track(&sample(1)).unwrap();
+        let b = db.add_track(&sample(1)).unwrap(); // same path → same id
+        assert_eq!(a, b);
+        assert_eq!(db.get_tracks().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn newest_first_ordering() {
+        let db = mem_db();
+        for n in 1..=3 {
+            db.add_track(&sample(n)).unwrap();
+        }
+        let all = db.get_tracks().unwrap();
+        assert_eq!(all[0].added_at, 1003); // ORDER BY added_at DESC
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn favorite_and_meta_updates() {
+        let db = mem_db();
+        let id = db.add_track(&sample(1)).unwrap();
+        db.set_favorite(id, true).unwrap();
+        assert!(db.get_track(id).unwrap().unwrap().favorite);
+        db.update_meta(id, "New".into(), "A".into(), "Al".into())
+            .unwrap();
+        let t = db.get_track(id).unwrap().unwrap();
+        assert_eq!(t.title, "New");
+        assert_eq!(t.artist, "A");
+        assert_eq!(t.album, "Al");
+    }
+
+    #[test]
+    fn path_lookup_and_duration_update() {
+        let db = mem_db();
+        let id = db.add_track(&sample(1)).unwrap();
+        assert_eq!(db.track_id_by_path("/mock/track-1.mp3").unwrap(), Some(id));
+        assert_eq!(db.track_id_by_path("/nope.mp3").unwrap(), None);
+        db.update_duration(id, 240).unwrap();
+        assert_eq!(db.get_track(id).unwrap().unwrap().duration, 240);
     }
 }

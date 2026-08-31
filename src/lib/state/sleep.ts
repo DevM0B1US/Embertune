@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createRoot, createSignal } from "solid-js";
-import { player, togglePlay } from "./state/player";
-import { toast } from "./state/ui";
+import { player, togglePlay } from "./player";
+import { toast } from "./ui";
 
 // ═══════════════════════════════════════════════════════════════════
 //  Sleep timer — fully reactive. Components read `sleepRemainingMs`

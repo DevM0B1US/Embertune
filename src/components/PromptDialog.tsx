@@ -1,9 +1,14 @@
+import { onCleanup, onMount } from "solid-js";
 import { finishPrompt, prompt, promptRefs } from "../lib/state/ui";
+import { trapModalFocus } from "../lib/modal";
 import { Ico } from "../lib/icons";
 import { X } from "lucide";
 
 export default function PromptDialog() {
   let overlay!: HTMLDivElement;
+  // focus management (audit U3): Tab cycles inside the dialog; the store
+  // already routes initial focus to the input/OK button
+  onMount(() => onCleanup(trapModalFocus(overlay)));
   const onOverlayClick = (e: MouseEvent) => {
     if (e.target === overlay) finishPrompt(null);
   };
@@ -14,7 +19,7 @@ export default function PromptDialog() {
       classList={{ open: prompt().open, confirm: prompt().confirm }}
       onClick={onOverlayClick}
     >
-      <div class="settings-card prompt-card">
+      <div class="settings-card prompt-card" role="dialog" aria-modal="true">
         <div class="settings-head">
           <span class="section-label">{prompt().title}</span>
           <button id="prompt-close" class="tbtn" title="Cancel" onClick={() => finishPrompt(null)}>

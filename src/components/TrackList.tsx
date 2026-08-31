@@ -1,7 +1,9 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount } from "solid-js";
-import TrackRow, { markColdRender, notifyScrollActivity } from "./TrackRow";
+import TrackRow from "./TrackRow";
+import { useRowFx } from "./rowfx";
 import { takeScrollReset, viewItems, viewKey } from "../lib/state/library";
 import { dlList } from "../lib/state/downloads";
+import { playTrack } from "../lib/state/player";
 import type { Track } from "../lib/types";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -20,7 +22,12 @@ import type { Track } from "../lib/types";
 //    background refreshes never recreate rows wholesale — no flashing.
 //  · Entrance cascades replay only when the visible id sequence
 //    actually changes (viewKey); rows mounted by scrolling run a
-//    continuous per-gesture ripple (≤120ms cap, see TrackRow).
+//    continuous per-gesture ripple (≤120ms cap, see TrackRow/rowfx).
+//  · Keyboard navigation (audit U1) + ARIA listbox semantics (audit
+//    U2): the list is focusable, ↑/↓/PgUp/PgDn/Home/End move a
+//    selection that is kept centered, Enter/Space play it. The
+//    selected row is highlighted exactly like a hovered row, so the
+//    list's appearance is untouched until the user actually navigates.
 // ═══════════════════════════════════════════════════════════════════
 
 const BUFFER = 10; // extra rows rendered above/below the viewport
@@ -28,31 +35,98 @@ const DEFAULT_ROW_H = 56; // mirrors --row-h; replaced by a real measure
 
 export default function TrackList(props: { viewEl: HTMLElement }) {
   let listEl!: HTMLUListElement;
+  const fx = useRowFx();
 
   const [rowH, setRowH] = createSignal(DEFAULT_ROW_H);
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewportH, setViewportH] = createSignal(0);
   const [mounted, setMounted] = createSignal(false);
+  // keyboard-selected track id (null = nothing selected yet)
+  const [selId, setSelId] = createSignal<number | null>(null);
 
   let lastKey = "";
 
+  // ⚠ DELIBERATE SIDE EFFECT IN A MEMO (audit B15) — read before touching:
+  // `win` is the one place that knows a new window diff is about to hit the
+  // DOM. Memos run synchronously during propagation, BEFORE render effects
+  // and before <For> mounts the new rows — which is exactly when the cold
+  // cascade marker must be set so the first freshly-mounted row anchors the
+  // stagger. Moving markColdRender() into an effect (createEffect / Render
+  // effect) would run AFTER the rows mount and the anchor would be one row
+  // late (or the whole cascade would read as stale). If you ever need this
+  // memo to be pure, the marker must move into the row-mount path itself,
+  // not into another effect.
   const win = createMemo(() => {
     const items = viewItems();
-    const key = viewKey(); // dependency — marks the cascade below
+    const key = viewKey(); // dependency — marks the cascade above
     if (!mounted()) return { start: 0, slice: [] as Track[] };
     const rh = rowH();
     const total = items.length;
     const top = Math.max(0, scrollTop() - listEl.offsetTop);
     const start = Math.max(0, Math.floor(top / rh) - BUFFER);
     const end = Math.min(total, Math.ceil((top + viewportH()) / rh) + BUFFER);
-    // memos run before effects/render effects: the cascade marker is
-    // set before any newly created row mounts
     if (key !== lastKey) {
       lastKey = key;
-      markColdRender();
+      fx.markColdRender();
     }
     return { start, slice: items.slice(start, end) };
   });
+
+  // ── keyboard navigation (audit U1) ────────────────────────────────
+  const rowById = createMemo(() => new Map(viewItems().map((t) => [t.id, t])));
+  const itemIndex = createMemo(() => new Map(viewItems().map((t, i) => [t.id, i])));
+
+  function moveSelection(delta: number): void {
+    const items = viewItems();
+    if (items.length === 0) return;
+    const cur = selId();
+    const idx = cur !== null ? (itemIndex().get(cur) ?? -1) : -1;
+    const next = Math.max(0, Math.min(items.length - 1, idx + delta));
+    const t = items[next]!;
+    setSelId(t.id);
+    // keep the selected row centered — through the container's own scroll
+    // pipeline so the scrollbar, ripple and smoothwheel stay in sync
+    const top = next * rowH() - viewportH() / 2 + rowH() / 2;
+    props.viewEl.scrollTo({ top: Math.max(0, top) });
+  }
+
+  const onListKeyDown = (e: KeyboardEvent): void => {
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        moveSelection(1);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        moveSelection(-1);
+        break;
+      case "PageDown":
+        e.preventDefault();
+        moveSelection(Math.max(1, Math.floor(viewportH() / rowH()) - 1));
+        break;
+      case "PageUp":
+        e.preventDefault();
+        moveSelection(-Math.max(1, Math.floor(viewportH() / rowH()) - 1));
+        break;
+      case "Home":
+        e.preventDefault();
+        moveSelection(-viewItems().length);
+        break;
+      case "End":
+        e.preventDefault();
+        moveSelection(viewItems().length);
+        break;
+      case "Enter":
+      case " ": {
+        const id = selId();
+        if (id !== null && rowById().has(id)) {
+          e.preventDefault();
+          playTrack(id);
+        }
+        break;
+      }
+    }
+  };
 
   onMount(() => {
     const view = props.viewEl;
@@ -66,7 +140,7 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
       rafPending = true;
       requestAnimationFrame(() => {
         rafPending = false;
-        notifyScrollActivity();
+        fx.notifyScrollActivity();
         setScrollTop(view.scrollTop);
       });
     };
@@ -107,7 +181,16 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
   });
 
   return (
-    <ul ref={listEl} id="track-list" style={{ height: `${viewItems().length * rowH()}px` }}>
+    <ul
+      ref={listEl}
+      id="track-list"
+      role="listbox"
+      aria-label="Library tracks"
+      tabIndex={0}
+      aria-activedescendant={selId() !== null ? `track-row-${selId()}` : undefined}
+      onKeyDown={onListKeyDown}
+      style={{ height: `${viewItems().length * rowH()}px` }}
+    >
       <For each={win().slice}>
         {(track, index) => (
           <TrackRow
@@ -116,6 +199,7 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
             start={() => win().start}
             rowH={rowH}
             viewEl={props.viewEl}
+            selected={() => selId() === track.id}
           />
         )}
       </For>

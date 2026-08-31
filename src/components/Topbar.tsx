@@ -17,7 +17,7 @@ import {
   sleepRemainingMs,
   sleepTotalMin,
   tickRemaining,
-} from "../lib/sleep";
+} from "../lib/state/sleep";
 import { Ico } from "../lib/icons";
 import { Mic, Minus, Maximize, Settings, Timer, X } from "lucide";
 import logoUrl from "../assets/logo.svg";
@@ -87,16 +87,14 @@ export default function Topbar() {
   document.addEventListener("click", docClick);
   onCleanup(() => document.removeEventListener("click", docClick));
 
-  // countdown ticks only while the popover is open
+  // countdown ticks only while the popover is open — 1s interval, not rAF
+  // (audit P6): the display only changes per second, and the old 60fps rAF
+  // loop re-rendered the popover ~60×/s for a value that moved 1/s
   createEffect(() => {
     if (!sleepOpen()) return;
-    let raf = 0;
-    const loop = () => {
-      tickRemaining();
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    onCleanup(() => cancelAnimationFrame(raf));
+    tickRemaining();
+    const iv = window.setInterval(tickRemaining, 1000);
+    onCleanup(() => window.clearInterval(iv));
   });
 
   const sleepCountdown = () => {

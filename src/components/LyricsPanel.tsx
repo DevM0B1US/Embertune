@@ -2,14 +2,11 @@ import { createEffect, createSignal, For, on, onCleanup, untrack } from "solid-j
 import { invoke } from "@tauri-apps/api/core";
 import { Maximize, Minimize, X } from "lucide";
 import { Ico } from "../lib/icons";
+import { parseLrc, type LrcLine } from "../lib/lrc";
 import { currentId, player } from "../lib/state/player";
 import { lyricsFs, lyricsOpen, setLyricsFs, setLyricsOpen } from "../lib/state/ui";
 
-// ── lyrics parsing ──────────────────────────────────────────────────
-interface LrcLine {
-  t: number;
-  text: string;
-}
+// ── lyrics parsing lives in lib/lrc.ts (unit-tested) ───────────────
 
 export default function LyricsPanel() {
   let box!: HTMLDivElement;
@@ -25,11 +22,16 @@ export default function LyricsPanel() {
   let lrcLastAuto = 0;
 
   // rAF-driven scroll — native smooth gets restarted/stutters in WebKit
+  // (prefers-reduced-motion, audit U5: no eased glide — jump straight)
   function lrcScrollTo(target: number): void {
     cancelAnimationFrame(lrcScrollRaf);
     const start = box.scrollTop;
     const diff = target - start;
     if (Math.abs(diff) < 1) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      box.scrollTop = target;
+      return;
+    }
     const dur = Math.min(450, 120 + Math.abs(diff) * 0.35);
     const t0 = performance.now();
     const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -85,6 +87,10 @@ export default function LyricsPanel() {
     // guard against out-of-order async resolution when tracks change fast:
     // only the latest request is allowed to write
     const req = ++lrcReq;
+    // drop refs to the previous track's lines — if the new lyrics are
+    // shorter, the tail used to keep referencing detached DOM nodes
+    // (audit B14, minor leak)
+    lineEls.length = 0;
     if (!t) {
       setActiveIdx(-1);
       setLrcLines([]);
@@ -106,31 +112,18 @@ export default function LyricsPanel() {
         setPlainText("No lyrics found for this track.");
         return;
       }
-      const lines: LrcLine[] = [];
-      const rawLines = raw.split("\n").filter((l) => l.trim());
-      let timed = false;
-      let plain = "";
-      for (const line of rawLines) {
-        const m = line.match(/^\[(\d{1,2}):(\d{2}(?:\.\d{1,3})?)\](.*)$/);
-        if (m) {
-          timed = true;
-          const secs = Number(m[1]) * 60 + Number(m[2]);
-          lines.push({ t: secs, text: m[3].trim() });
-        } else if (!timed) {
-          plain += line + "\n";
-        }
-      }
+      const parsed = parseLrc(raw);
       if (req !== lrcReq) return;
-      if (timed) {
-            setLrcLines(lines);
+      if (parsed.plain === null && parsed.lines.length > 0) {
+        setLrcLines(parsed.lines);
         setPlainText(null);
         setActiveIdx(-1);
       } else {
         setLrcLines([]);
         setActiveIdx(-1);
-        setPlainText(plain.trim() || "No lyrics found for this track.");
+        setPlainText(parsed.plain ?? "No lyrics found for this track.");
       }
-    } catch (e) {
+    } catch {
       if (req !== lrcReq) return;
       setPlainText("No lyrics found for this track.");
     }
@@ -156,6 +149,13 @@ export default function LyricsPanel() {
     void player().position;
     queueMicrotask(updateLyrics);
   });
+  // an in-flight auto-scroll must not keep running after the panel
+  // closes (audit P5)
+  createEffect(
+    on(lyricsOpen, (open) => {
+      if (!open) cancelAnimationFrame(lrcScrollRaf);
+    })
+  );
   // leaving fullscreen re-syncs the scroll position
   createEffect(
     on(lyricsFs, (fs, prev) => {

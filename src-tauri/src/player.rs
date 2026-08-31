@@ -1,5 +1,5 @@
 use crate::db::{Db, Track};
-use crate::settings::{Settings, SettingsStore};
+use crate::settings::{data_dir, Settings, SettingsStore};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -7,9 +7,15 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::AppHandle;
+
+/// Overall deadline for one mpv request/response round trip. The per-read
+/// timeout (2s) alone can let the reply loop spin for many seconds when mpv
+/// floods broadcast events (audit B12); this caps the whole request.
+const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Serialize)]
 pub struct PlayerState {
@@ -27,7 +33,13 @@ pub struct PlayerState {
 pub struct Player {
     conn: Arc<Mutex<Option<IpcConn>>>,
     child: Mutex<Option<Child>>,
+    /// ids in current play order (matches mpv's playlist 1:1)
     queue: Mutex<Vec<i64>>,
+    /// ids in the order the queue was built (pre-shuffle) — used to
+    /// restore order when shuffle is switched off (audit B13)
+    base_order: Mutex<Vec<i64>>,
+    /// signals the connect/fade background threads to exit (audit A6)
+    shutdown_flag: Arc<AtomicBool>,
     db: Arc<Db>,
     settings: Arc<SettingsStore>,
 }
@@ -62,7 +74,11 @@ impl IpcConn {
         line.push('\n');
         self.out.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
         self.out.flush().map_err(|e| e.to_string())?;
+        let deadline = std::time::Instant::now() + REQUEST_DEADLINE;
         loop {
+            if std::time::Instant::now() > deadline {
+                return Err("mpv request timed out".into());
+            }
             let mut raw = String::new();
             self.inp
                 .read_line(&mut raw)
@@ -107,6 +123,29 @@ impl IpcConn {
         let v = self.request(&[json!("get_property"), json!(name)])?;
         Ok(v.get("data").and_then(|d| d.as_i64()))
     }
+
+    fn get_str(&mut self, name: &str) -> Result<Option<String>, String> {
+        let v = self.request(&[json!("get_property"), json!(name)])?;
+        Ok(v.get("data").and_then(|d| d.as_str()).map(|s| s.to_string()))
+    }
+
+    /// Filenames of mpv's current playlist, in play order.
+    fn playlist_filenames(&mut self) -> Vec<String> {
+        let v = match self.request(&[json!("get_property"), json!("playlist")]) {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+        v.get("data")
+            .and_then(|d| d.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| {
+                        e.get("filename").and_then(|f| f.as_str()).map(|s| s.to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 impl Player {
@@ -142,10 +181,15 @@ impl Player {
         let conn_holder: Arc<Mutex<Option<IpcConn>>> = Arc::new(Mutex::new(None));
         let conn_thread = conn_holder.clone();
         let settings_thread = settings.clone();
+        let connect_flag = Arc::new(AtomicBool::new(false));
+        let fade_flag = connect_flag.clone();
 
         std::thread::spawn(move || {
             let mut attempt = 0u32;
             loop {
+                if connect_flag.load(Ordering::Relaxed) {
+                    return;
+                }
                 match IpcConn::connect(&sock2) {
                     Ok(mut c) => {
                         let _ = c.set_prop("volume", 100f64);
@@ -182,6 +226,9 @@ impl Player {
             let mut base = 100.0f64;
             let mut vol_cur = 100.0f64;
             loop {
+                if fade_flag.load(Ordering::Relaxed) {
+                    return;
+                }
                 // check settings without cloning full struct when disabled
                 let (fade, fd) = {
                     let s = fade_settings.get();
@@ -256,6 +303,8 @@ impl Player {
             conn: conn_holder,
             child: child_holder,
             queue: Mutex::new(Vec::new()),
+            base_order: Mutex::new(Vec::new()),
+            shutdown_flag: connect_flag,
             db,
             settings,
         }
@@ -271,6 +320,12 @@ impl Player {
 
     /// Play a track and enqueue the rest of the library after it. mpv's own
     /// playlist handles auto-advance; the UI tracks position via `playlist-pos`.
+    ///
+    /// The whole queue is handed to mpv with a single `loadlist` call on a
+    /// generated .m3u (audit B1). The old per-track `loadfile append` loop
+    /// was one IPC round trip per track — a 10k-track library froze the
+    /// play click for tens of seconds. A 10k-line file write is ~ms; the
+    /// IPC cost is now O(1) regardless of library size.
     pub fn load_track(&self, id: i64) {
         let all = match self.db.get_tracks() {
             Ok(t) => t,
@@ -286,20 +341,82 @@ impl Player {
             shuffle_vec(&mut tail, now_nanos());
             rest.extend(tail);
         }
-        *self.queue.lock().unwrap() = rest.iter().map(|t| t.id).collect();
-        if let Some(first) = rest.first() {
-            let paths: Vec<String> = rest.iter().map(|t| t.path.clone()).collect();
-            self.with_conn(|c| {
-                let _ = c.command(&["playlist-clear"]);
-                let _ = c.command(&["loadfile", &first.path, "replace"]);
-                // guarantee playback always starts from the top of the track
-                let _ = c.command(&["seek", "0", "absolute"]);
-                for p in &paths[1..] {
-                    let _ = c.command(&["loadfile", p, "append"]);
-                }
-                let _ = c.set_prop("pause", false);
-            });
+        let ids: Vec<i64> = rest.iter().map(|t| t.id).collect();
+        *self.queue.lock().unwrap() = ids.clone();
+        // this load establishes the base (un-shuffled) order
+        *self.base_order.lock().unwrap() = ids;
+        self.load_playlist(&rest, 0);
+        self.with_conn(|c| {
+            let _ = c.set_prop("pause", false);
+        });
+    }
+
+    /// Write the play order to the shared m3u and hand it to mpv in one
+    /// IPC call. `start` is the entry that should play first (mpv jumps
+    /// there before playback, so the clicked track begins immediately).
+    fn load_playlist(&self, tracks: &[Track], start: usize) {
+        if tracks.is_empty() {
+            return;
         }
+        let mut body = String::with_capacity(tracks.iter().map(|t| t.path.len() + 1).sum::<usize>());
+        for t in tracks {
+            body.push_str(&t.path);
+            body.push('\n');
+        }
+        let file = data_dir().join("queue.m3u");
+        if std::fs::write(&file, body).is_err() {
+            return; // keep the old queue; playback is simply not started
+        }
+        let file_s = file.to_string_lossy().to_string();
+        self.with_conn(|c| {
+            let _ = c.command(&["loadlist", &file_s, "replace"]);
+            if start > 0 {
+                let _ = c.set_prop("playlist-pos", start as i64);
+            }
+        });
+    }
+
+    /// Rebuild mpv's playlist in the pre-shuffle order, keeping the current
+    /// track current and (best effort) its playhead position.
+    fn restore_base_order(&self) {
+        let base: Vec<i64> = self.base_order.lock().unwrap().clone();
+        if base.is_empty() {
+            return;
+        }
+        let by_id: HashMap<i64, Track> = self
+            .db
+            .get_tracks()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| (t.id, t))
+            .collect();
+        let tracks: Vec<Track> = base.iter().filter_map(|id| by_id.get(id).cloned()).collect();
+        if tracks.is_empty() {
+            return;
+        }
+        let (cur_path, cur_pos, paused) = self
+            .with_conn(|c| {
+                (
+                    c.get_str("path").ok().flatten(),
+                    c.get_f64("time-pos").ok().flatten().unwrap_or(0.0),
+                    c.get_bool("pause").unwrap_or(false),
+                )
+            })
+            .unwrap_or((None, 0.0, false));
+        let start = cur_path
+            .as_ref()
+            .and_then(|p| tracks.iter().position(|t| &t.path == p))
+            .unwrap_or(0);
+        *self.queue.lock().unwrap() = tracks.iter().map(|t| t.id).collect();
+        self.load_playlist(&tracks, start);
+        // give mpv a beat to open the target entry, then restore state
+        std::thread::sleep(Duration::from_millis(120));
+        self.with_conn(|c| {
+            let _ = c.set_prop("pause", paused);
+            if cur_pos > 0.5 {
+                let _ = c.command(&["seek", &format!("{cur_pos}"), "absolute"]);
+            }
+        });
     }
 
     pub fn toggle_play(&self) {
@@ -307,14 +424,6 @@ impl Player {
             let paused = c.get_bool("pause").unwrap_or(true);
             let _ = c.set_prop("pause", !paused);
         });
-    }
-
-    pub fn stop(&self) {
-        self.with_conn(|c| {
-            let _ = c.command(&["stop"]);
-            let _ = c.command(&["playlist-clear"]);
-        });
-        *self.queue.lock().unwrap() = Vec::new();
     }
 
     pub fn next(&self) {
@@ -341,8 +450,39 @@ impl Player {
         });
     }
 
+    /// Persist the setting AND apply it to the running playlist (audit B13):
+    /// on → mpv's `playlist-shuffle` (no playback interruption), then the Rust
+    /// queue is re-synced from mpv's actual order; off → the pre-shuffle order
+    /// is rebuilt, keeping the current track current.
     pub fn set_shuffle(&self, on: bool) {
+        let was = self.settings.get().shuffle;
         self.settings.set_playback(Some(on), None, None);
+        if was == on {
+            return;
+        }
+        if on {
+            let order = self.with_conn(|c| {
+                let _ = c.command(&["playlist-shuffle"]);
+                c.playlist_filenames()
+            });
+            let Some(order) = order else { return };
+            if order.is_empty() {
+                return;
+            }
+            let by_path: HashMap<String, i64> = self
+                .db
+                .get_tracks()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| (t.path, t.id))
+                .collect();
+            let ids: Vec<i64> = order.iter().filter_map(|p| by_path.get(p).copied()).collect();
+            if !ids.is_empty() {
+                *self.queue.lock().unwrap() = ids;
+            }
+        } else {
+            self.restore_base_order();
+        }
     }
 
     pub fn set_repeat(&self, mode: String) {
@@ -365,19 +505,6 @@ impl Player {
         });
     }
 
-    pub fn set_effect(&self, effect: String) {
-        self.settings.set_effect(Some(effect));
-        self.rebuild_af();
-    }
-
-    fn rebuild_af(&self) {
-        let s = self.settings.get();
-        let af = af_from_settings(&s);
-        self.with_conn(|c| {
-            let _ = c.set_prop_str("af", &af);
-        });
-    }
-
     pub fn state(&self) -> PlayerState {
         let (playing, position, duration, volume, idle, pos) = self
             .with_conn(|c| {
@@ -393,17 +520,17 @@ impl Player {
             })
             .unwrap_or((false, 0.0, 0.0, 100.0, true, None));
 
-        // fetch current track
-        let ids: Vec<i64> = self.queue.lock().unwrap().clone();
-        let by_id: HashMap<i64, Track> = self
-            .db
-            .get_tracks_by_ids(&ids)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| (t.id, t))
-            .collect();
+        // fetch ONLY the current track (audit B2). The old path cloned the
+        // whole queue and ran `SELECT … WHERE id IN (…N…)` per 500ms poll —
+        // 20k DB rows/sec sustained on a 10k library — to look up one row.
         let current = match pos {
-            Some(p) if p >= 0 => ids.get(p as usize).and_then(|id| by_id.get(id).cloned()),
+            Some(p) if p >= 0 => {
+                let id = self.queue.lock().unwrap().get(p as usize).copied();
+                match id {
+                    Some(id) => self.db.get_track(id).ok().flatten(),
+                    None => None,
+                }
+            }
             _ => None,
         };
         let s = self.settings.get();
@@ -421,6 +548,8 @@ impl Player {
     }
 
     pub fn shutdown(&self) {
+        // stop the connect/fade background threads first (audit A6)
+        self.shutdown_flag.store(true, Ordering::Relaxed);
         if let Some(mut child) = self.child.lock().unwrap().take() {
             let _ = child.kill();
             let _ = child.wait();

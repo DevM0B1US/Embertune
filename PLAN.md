@@ -1,5 +1,13 @@
 # Embertune — Plan
 
+> **Historical document** (audit D4): this was the original build plan. The
+> architecture has since evolved — the frontend was converted from vanilla
+> JS to SolidJS + TypeScript with five domain stores (`src/lib/state/`),
+> the `state.ts` god-module no longer exists, playback drives mpv over its
+> JSON IPC socket (never libmpv), covers are served over the `art://`
+> protocol, and the queue is handed to mpv with a single `loadlist` call.
+> The milestones below are all shipped; keep this file as background only.
+
 A Linux music player + playlist ripper. Tauri 2 (Rust core, webview UI) with
 yt-dlp and spotdl as bundled sidecar engines, libmpv for playback.
 
@@ -40,10 +48,13 @@ yt-dlp and spotdl as bundled sidecar engines, libmpv for playback.
 ```
 
 ### Modules (src-tauri/src/)
-- `lib.rs` — Tauri app, state, command registration
-- `downloader.rs` — DownloadManager: spawn, kill, progress parse, events
-- `player.rs` — Player: libmpv bindings, queue, transport commands
+- `lib.rs` — Tauri app, state, command registration, lyrics, art protocol
+- `downloader/` — DownloadManager: spawn, kill, progress parse, events
+- `player.rs` — Player: mpv JSON IPC, queue (single `loadlist` call), transport
 - `db.rs` — SQLite init, track CRUD
+- `settings.rs` — atomic JSON settings store (0o600)
+- `art.rs` — ffmpeg cover extraction, FNV-1a cache keys
+- `util.rs` — shared helpers (audio extensions, title split, unix time)
 
 ## Schema
 

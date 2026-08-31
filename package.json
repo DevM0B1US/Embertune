@@ -8,7 +8,12 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "oxlint src",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -18,8 +23,13 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-solid": "^0.17.0",
+    "oxlint": "^1.80.0",
+    "prettier": "^3.9.6",
     "typescript": "^7.0.2",
     "vite": "^6",
-    "vite-plugin-solid": "^2.11.14"
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "^4.1.11"
   }
 }

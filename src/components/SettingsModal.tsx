@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
-import { createEffect, createSignal, For } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount } from "solid-js";
+import { focusModal, trapModalFocus } from "../lib/modal";
 import {
   closeSettings,
   settingsOpen,
@@ -18,6 +19,7 @@ const QUALITIES: Array<[string, string]> = [
 
 export default function SettingsModal() {
   let overlay!: HTMLDivElement;
+  let spotId!: HTMLInputElement;
   let spotSecret!: HTMLInputElement;
   const [updating, setUpdating] = createSignal(false);
 
@@ -25,6 +27,11 @@ export default function SettingsModal() {
   createEffect(() => {
     spotSecret.placeholder = settings().has_spotify_creds ? "••••••••" : "";
   });
+
+  // focus management (audit U3): focus lands in the dialog when it opens,
+  // and Tab cycles inside it instead of reaching the background UI
+  createEffect(() => focusModal(settingsOpen(), overlay));
+  onMount(() => onCleanup(trapModalFocus(overlay)));
 
   const applyQuality = (v: string): void => {
     void invoke("set_download_quality", { quality: v });
@@ -48,7 +55,7 @@ export default function SettingsModal() {
       classList={{ open: settingsOpen() }}
       onClick={onOverlayClick}
     >
-      <div class="settings-card settings-modal">
+      <div class="settings-card settings-modal" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="settings-head">
           <span class="section-label">Settings</span>
           <button id="btn-settings-close" class="tbtn" title="Close" onClick={() => closeSettings()}>
@@ -169,12 +176,7 @@ export default function SettingsModal() {
             <div class="spot-grid">
               <label class="field">
                 Client ID{" "}
-                <input
-                  id="spot-id"
-                  type="text"
-                  spellcheck={false}
-                  value={settings().spotify_client_id ?? ""}
-                />
+                <input ref={spotId} id="spot-id" type="text" spellcheck={false} />
               </label>
               <label class="field">
                 Client Secret{" "}
@@ -185,7 +187,10 @@ export default function SettingsModal() {
               id="save-creds"
               class="btn primary"
               onClick={() => {
-                const id = (document.getElementById("spot-id") as HTMLInputElement).value.trim();
+                // both fields via refs (audit Q1) — the Client ID used to be
+                // read back through document.getElementById, the exact
+                // reach-around pattern the prior audit removed
+                const id = spotId.value.trim();
                 const secret = spotSecret.value.trim();
                 void invoke("set_spotify_creds", { clientId: id, clientSecret: secret });
               }}

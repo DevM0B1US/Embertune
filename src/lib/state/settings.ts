@@ -25,7 +25,8 @@ const settingsOwner = createRoot(() => {
   });
 
   function applyTheme(theme: string): void {
-    document.documentElement.dataset.theme = theme;
+    // audit Q3: the direct DOM write here duplicated the reactive effect
+    // below (which fires on the same tick) — the effect is the single writer
     void invoke("set_theme", { theme });
     setSettings((s) => ({ ...s, theme }));
   }

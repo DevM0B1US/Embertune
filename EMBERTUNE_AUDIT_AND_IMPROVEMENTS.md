@@ -469,3 +469,102 @@ Manual `workflow_dispatch` runs build-only (artifacts on the run, no release).
 `swatinem/rust-cache`. Note: the Linux runtime still needs `yt-dlp`, `ffmpeg`
 and `mpv` installed on the user's system (stated in the release body and the
 deb `depends`).
+
+---
+
+## 13. Post-delivery Addendum 4 — Full Codebase Audit Remediation
+
+Basis: the user-supplied `EMBERTUNE_FULL_CODEBASE_AUDIT.md` (6.5/10 verdict).
+Every actionable finding was triaged and fixed in one round. The mapping
+below is the authoritative fix log; a copy lives in
+`EMBERTUNE_AUDIT_FIXES.md`.
+
+### Critical
+
+| ID | Finding | Fix |
+|----|---------|-----|
+| B1 | `load_track` issued one `loadfile append` IPC per queued track (10k library ≈ 10k round trips → multi-second hang on first click) | The queue is written to a single `.m3u` (`~/.local/share/embertune/queue.m3u`) and handed to mpv with one `loadlist … replace` IPC; play cost is O(1) regardless of library size |
+| B2 | `state()` cloned the whole queue and ran `SELECT … WHERE id IN (…N…)` every 500ms poll to look up ONE track (~20k rows/s at 10k) | Polls fetch exactly one row via `db.get_track(current_id)`; the queue clone is a single `get(p)` |
+
+### Security
+
+| ID | Finding | Fix |
+|----|---------|-----|
+| SE1 | Spotify client secret persisted world-readable (umask-dependent) | `settings.json` (and the temp file) is chmod'd `0o600` on every persist; existing files are tightened on load (migration) |
+| SE8 | `set_download_dir` accepted any path | Rejects paths whose nearest existing ancestor is outside the home directory; the Settings "Set" button surfaces the error as a toast |
+| SE9 | `add_local_file` accepted any path | Same home-directory allowlist |
+| A10 | `lrclib.net` in the download-URL allowlist | Removed (lyrics host, never a download source) + comment |
+| Q6 | 7 dead commands registered (`cancel_download`, `clear_downloads`, `player_stop`, `set_fade`, `set_effect`, `extract_art`, `get_art`) | All removed from the IPC surface. Dormant engines (fade poller, effect filter, download cancel/clear) are kept with `#[allow(dead_code)]` + rationale comments for a future UI; `base64` dep dropped |
+
+### High
+
+| ID | Finding | Fix |
+|----|---------|-----|
+| B3 | Art effect `defer: true` → blank art after reload-with-playing-track | Deferral removed (guarded by cache + stale-check) |
+| B4 | Module-scope `artObserver` cached against the first `viewEl` → stale detached root after ErrorBoundary recovery, covers silently dead | Row effects (cascade + ripple + observer + prefetch queue) moved into a per-`LibraryView` `RowFx` instance (context); `dispose()` disconnects the observer on unmount and rebuilds if the root element changes |
+| TE1 | Zero frontend tests | Vitest suite (27 tests): `format.ts`, `parseLrc`, `kindOfUrl`, `mergeTracks`/`sameTrack` (pure modules extracted for testability); Playwright suites (20-check scroll regression + 16-check new-feature smoke) |
+| TE2 | Backend tests only for parsers | `cargo test` suites added: `db.rs` CRUD (in-memory SQLite), `validate_download_url`, `path_inside_home`, `util.rs` helpers |
+
+### Medium
+
+| ID | Finding | Fix |
+|----|---------|-----|
+| B5 | LRC regex matched only the first `[mm:ss]` per line | Parser extracted to `lib/lrc.ts`: multi-timestamp lines emit one line per stamp, metadata tags + `[offset:]` handled, sorted output, ms precision |
+| B6 | `volumeBusy` stuck true after releasing the slider off-input | `setPointerCapture` on the volume input + `onLostPointerCapture` fallback |
+| B7 | `smoothwheel` cleanup leaked wheel/scroll listeners | Handlers stored and removed in cleanup |
+| B13 | `set_shuffle` only persisted the flag | ON → mpv `playlist-shuffle` (no interruption) + queue re-sync from mpv's actual order; OFF → pre-shuffle order rebuilt via `loadlist`, current track kept current with playhead restore |
+| B12 | `IpcConn::request` could spin ~2s on event floods | 5s overall request deadline |
+| A6 | Connect/fade threads had no shutdown signal | Shared `AtomicBool` checked per iteration; `shutdown()` sets it |
+| Q1 | `SettingsModal` read the Client ID via `document.getElementById` | Ref, like its sibling |
+| Q2 | Module-scope mutable state in `TrackRow` | Moved to the `RowFx` context (see B4) — one instance per list, tunings unchanged |
+| Q12/D1 | No lint/format/test tooling | `npm run lint` (oxlint), `format`/`format:check` (Prettier), `test` (Vitest). ESLint+typescript-eslint was attempted and is **impossible with TypeScript 7** (the tsgo native toolchain exposes no classic compiler API; typescript-eslint 8 requires TS <6.1) — oxlint chosen as the working linter; revisit when typescript-eslint ships tsgo support |
+| U1 | No keyboard nav in the track list | List is a focusable listbox: ↑/↓/PgUp/PgDn/Home/End move a selection (kept centered), Enter/Space plays; global volume/transport shortcuts step aside while the list is focused |
+| U3 | No modal focus management | Focus moves into Settings/Meta/Prompt on open (transition-aware retry), Tab is trapped inside; `role="dialog"` + `aria-modal` |
+
+### Low
+
+| ID | Fix |
+|----|-----|
+| B8 | A second `promptDialog`/`confirmDialog` resolves the pending promise (`null`) instead of orphaning it |
+| B9 | `kindOfUrl` mirrors the backend exactly (`open.spotify.com` / `spotify:`) — no icon flicker on query-string false positives |
+| B10 | Poll failures logged after 3 consecutive misses; one toast after 8; resets on recovery |
+| B11 | Mock `btoa` is Unicode-safe (`TextEncoder`) |
+| B14 | `lineEls` cleared on every lyrics load |
+| B15 | The memo side-effect (`markColdRender`) is now documented loudly as deliberate (memos run before render effects — an effect would anchor one row late) |
+| P5 | Lyrics auto-scroll rAF cancelled when the panel closes |
+| P6 | Sleep-popover countdown is a 1s `setInterval` (was 60fps rAF) |
+| Q3 | `applyTheme` no longer double-writes the DOM (the effect is the single writer) |
+| Q10 | `iconBody` escapes attribute values; `IconNode` is the exported prop type |
+| Q11 | `noUnusedLocals`/`noUnusedParameters`/`noImplicitReturns`/`noFallthroughCasesInSwitch` enabled (clean) |
+| T2–T4 | `RepeatMode`/`JobKind`/`JobStatus` string unions on the frontend |
+| U2 | Listbox/option semantics + `aria-activedescendant` |
+| U5 | `prefers-reduced-motion` respected by the marquee and lyrics auto-scroll |
+| U10 | Drag-and-drop audio files onto the window adds them to the library (Tauri only) |
+| A2 | `sleep.ts` moved to `lib/state/` |
+| D4 | `PLAN.md` marked historical + architecture notes refreshed |
+| D2 | New `.github/workflows/ci.yml`: frontend typecheck+lint+test, **plus a `cargo check`/`cargo test` job — CI is the first compile gate for this round's Rust changes** |
+
+### Deliberately not done (with reasons)
+
+- **Q5 — split `lib.rs` into `commands/*`**: the file is large but stable; a blind 890-line refactor with no compiler in the authoring sandbox is exactly how you break a working backend. CI now compiles it; the split can follow with green tests as the safety net.
+- **SE2 — CSP `'unsafe-hashes'` for styles**: audit itself calls it labor-intensive and bounded; Solid's inline `style` attributes need `unsafe-inline`.
+- **Sprint 6 — event push over poll (mpv `observe_property`)**: explicitly optional long-term work (2–3 weeks); the per-poll cost is now O(1) after B2, which removes most of the incentive.
+- **A8 — persist the download queue across restarts**, **A9 — batch startup ffprobe**: audit marks both acceptable/low for this scale.
+- **T6/T7 — f64 durations / Rust repeat enum**: audit: "no bug"; churn outweighs benefit.
+- **Repo-wide Prettier reformat**: configs + scripts ship, `format:check` intentionally not in CI so the diff stays reviewable; adopt incrementally.
+
+### Verification (all green)
+
+- `npm run typecheck` (strict + new noUnused* flags) — clean
+- `npm run lint` (oxlint, 94 rules) — 0 warnings/errors
+- `npm run test` (Vitest) — 27/27
+- `npm run build` — clean
+- Playwright scroll regression suite — **20/20** (cascade caps, no-accumulation, ripple reset, opaque settles, DOM bounds, smoothwheel glide, frame health @124 tracks, art coverage, 0 console errors)
+- Playwright audit-fix smoke — **16/16** (keyboard nav + volume exclusion, ARIA, modal focus + trap, prompt race, sleep interval)
+- Rust: **not compiled in the authoring sandbox (no cargo)** — covered by the new CI `cargo check`/`cargo test` job; run `cargo check` locally before packaging.
+
+### UX notes
+
+- Keyboard list navigation: Tab to the list, arrows to move, Enter to play. The selected row uses the hover styling, so nothing changes visually until you navigate.
+- Drag-and-drop works only in the real app (browser mock has no real file paths).
+- Shuffle off now restores the original play order and keeps the current track (with its playhead) — previously it silently kept playing shuffled.

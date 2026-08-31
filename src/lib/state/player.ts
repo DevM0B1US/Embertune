@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createMemo, createRoot, createSignal } from "solid-js";
-import type { PlayerState } from "../types";
+import type { PlayerState, RepeatMode } from "../types";
+import { toast } from "./ui";
 
 // ═══════════════════════════════════════════════════════════════════
 //  Player store — single source of truth for playback state.
@@ -103,13 +104,31 @@ const playerOwner = createRoot(() => {
   // ── poll loop ─────────────────────────────────────────────────────
   let pollTimer: number | undefined;
   let running = false;
+  let pollFailures = 0;
+  let pollFailureToasted = false;
 
   async function pollOnce(): Promise<void> {
     let ps: PlayerState;
     try {
       ps = await invoke<PlayerState>("get_player_state");
-    } catch {
-      return; // backend unavailable — keep last known state
+    } catch (err) {
+      // backend unavailable — keep last known state, but don't stay
+      // completely silent (audit B10): log after a few consecutive
+      // failures and surface one toast if it persists
+      pollFailures++;
+      if (pollFailures === 3) {
+        console.warn("[embertune] player backend unreachable — retrying", err);
+      }
+      if (pollFailures >= 8 && !pollFailureToasted) {
+        pollFailureToasted = true;
+        toast("Player backend unreachable — check the console");
+      }
+      return;
+    }
+    if (pollFailures > 0) {
+      pollFailures = 0;
+      pollFailureToasted = false;
+      console.info("[embertune] player backend recovered");
     }
     const changed = syncFromBackend(ps);
     if (!changed) return;
@@ -190,7 +209,7 @@ const playerOwner = createRoot(() => {
     void invoke("set_shuffle", { on });
   }
 
-  const REPEAT_NEXT: Record<string, string> = { off: "all", all: "one", one: "off" };
+  const REPEAT_NEXT: Record<RepeatMode, RepeatMode> = { off: "all", all: "one", one: "off" };
 
   function cycleRepeat(): void {
     const next = REPEAT_NEXT[player().repeat] ?? "off";

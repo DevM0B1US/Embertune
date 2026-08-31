@@ -11,7 +11,7 @@
 //  Library size is tunable for load testing:  ?tracks=5000
 // ═══════════════════════════════════════════════════════════════════
 
-import type { JobView, PlayerState, Track } from "../lib/types";
+import type { JobView, PlayerState, RepeatMode, Track } from "../lib/types";
 
 const ARTISTS = [
   "Ember Kings", "Nova Vale", "The Hollow Suns", "Cassette Ghosts", "Ivory Static",
@@ -58,7 +58,7 @@ function artDataUri(track: Track): string {
     `<circle cx="52" cy="20" r="26" fill="hsl(${hue},55%,45%)" opacity="0.55"/>` +
     `<text x="36" y="46" font-family="sans-serif" font-size="30" font-weight="700" ` +
     `fill="#fff" text-anchor="middle" opacity="0.9">${letter}</text></svg>`;
-  return `data:image/svg+xml;base64,${btoa(svg)}`;
+  return `data:image/svg+xml;base64,${btoa(String.fromCharCode(...new TextEncoder().encode(svg)))}`;
 }
 
 interface MockState {
@@ -70,10 +70,15 @@ interface MockState {
     startedAt: number;
     volume: number;
     shuffle: boolean;
-    repeat: string;
+    repeat: RepeatMode;
     speed: number;
     currentIndex: number;
   };
+}
+
+/** Strict optimistic kind — mirrors the backend (audit B9). */
+function mockKindOf(url: string): "spotify" | "youtube" {
+  return url.includes("open.spotify.com") || url.startsWith("spotify:") ? "spotify" : "youtube";
 }
 
 export function installTauriMock(): void {
@@ -307,7 +312,7 @@ export function installTauriMock(): void {
         p.shuffle = Boolean(args.on);
         return Promise.resolve(true);
       case "set_repeat":
-        p.repeat = String(args.mode);
+        p.repeat = String(args.mode) as RepeatMode;
         return Promise.resolve(true);
       case "set_speed":
         p.speed = Number(args.speed) || 1;
@@ -320,7 +325,7 @@ export function installTauriMock(): void {
         jobs.set(id, {
           id,
           url,
-          kind: url.includes("spotify") ? "spotify" : "youtube",
+          kind: mockKindOf(url),
           status: "queued",
           title: url,
           percent: -1,

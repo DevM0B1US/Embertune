@@ -1,6 +1,7 @@
 use crate::db::{Db, NewTrack};
 use crate::probe_duration;
 use crate::settings::SettingsStore;
+use crate::util::{is_audio_file, split_title, unix_now};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -123,6 +124,10 @@ impl DownloadManager {
         id
     }
 
+    /// Cancel a job by id. No webview surface yet (audit Q6: the command was
+    /// dead — no cancel button exists); kept for the future cancel UI, and
+    /// the proc-kill path here mirrors run_job's internal cancellation.
+    #[allow(dead_code)]
     pub fn cancel(&self, id: u64) {
         {
             let mut procs = self.inner.procs.lock().unwrap();
@@ -152,6 +157,9 @@ impl DownloadManager {
             .collect()
     }
 
+    /// Drop finished/errored jobs from the map. No webview surface yet
+    /// (audit Q6); kept for the future "clear" UI.
+    #[allow(dead_code)]
     pub fn clear_finished(&self) {
         let mut st = self.inner.state.lock().unwrap();
         let active = [JobStatus::Queued, JobStatus::Downloading];
@@ -819,23 +827,8 @@ fn dir_diff(dir: &std::path::Path, before: &HashSet<String>) -> Vec<String> {
 }
 
 fn is_audio(name: &str) -> bool {
-    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    matches!(
-        ext.as_str(),
-        "mp3" | "m4a"
-            | "m4b"
-            | "flac"
-            | "ogg"
-            | "oga"
-            | "opus"
-            | "wav"
-            | "webm"
-            | "aac"
-            | "aif"
-            | "aiff"
-            | "wma"
-            | "mka"
-    )
+    // shared implementation lives in crate::util (audit Q7)
+    is_audio_file(name)
 }
 
 fn spotdl_temp_dir() -> Option<std::path::PathBuf> {
@@ -1037,14 +1030,8 @@ fn file_stem(path: &str) -> String {
 }
 
 fn split_artist_title(stem: &str) -> (String, String) {
-    if let Some(i) = stem.find(" - ") {
-        let artist = stem[..i].trim();
-        let title = stem[i + 3..].trim();
-        if !artist.is_empty() && !title.is_empty() {
-            return (artist.to_string(), title.to_string());
-        }
-    }
-    (String::new(), stem.to_string())
+    // shared implementation lives in crate::util (audit Q8)
+    split_title(stem)
 }
 
 fn tail(s: &str, max: usize) -> String {
@@ -1059,12 +1046,7 @@ fn tail(s: &str, max: usize) -> String {
     }
 }
 
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
+// unix_now() comes from crate::util (audit Q9 — one shared definition)
 
 #[cfg(test)]
 mod work_tests {

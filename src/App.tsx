@@ -12,6 +12,7 @@ import { initDownloads } from "./lib/state/downloads";
 import { initLibraryEvents, refreshLibrary } from "./lib/state/library";
 import { initSettings } from "./lib/state/settings";
 import { startPlayerSync } from "./lib/state/player";
+import { toast } from "./lib/state/ui";
 import {
   closeMeta,
   closeSettings,
@@ -102,6 +103,9 @@ export default function App() {
       const el = e.target as HTMLElement;
       const tag = el.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      // the track list owns ↑/↓/PgUp/PgDn/Home/End/Enter/Space when focused
+      // (keyboard nav, audit U1) — global volume/transport shortcuts step aside
+      if (el.closest?.("#track-list")) return;
       if (el.closest?.("button, [role='button'], a")) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       switch (e.key) {
@@ -141,6 +145,41 @@ export default function App() {
     };
     document.addEventListener("keydown", keyShortcuts);
     onCleanup(() => document.removeEventListener("keydown", keyShortcuts));
+
+    // drag-and-drop audio files onto the window adds them to the library
+    // (audit U10 — Tauri only; the browser mock has no real paths)
+    if ("__TAURI_INTERNALS__" in window) {
+      let unlistenDrag: (() => void) | undefined;
+      void (async () => {
+        try {
+          const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+          unlistenDrag = await getCurrentWebview().onDragDropEvent(async (event) => {
+            if (event.payload.type !== "drop") return;
+            const audio = event.payload.paths.filter((p) =>
+              /\.(mp3|m4a|m4b|flac|ogg|oga|opus|wav|webm|aac|aif|aiff|wma|mka)$/i.test(p)
+            );
+            if (audio.length === 0) return;
+            let added = 0;
+            for (const p of audio) {
+              try {
+                if (await invoke<boolean>("add_local_file", { path: p })) added++;
+              } catch {
+                /* unreadable/outside-home — skip */
+              }
+            }
+            toast(
+              added
+                ? `Added ${added} file${added === 1 ? "" : "s"}`
+                : "Files already in library"
+            );
+            await refreshLibrary();
+          });
+        } catch {
+          /* drag-drop events unavailable — feature silently absent */
+        }
+      })();
+      onCleanup(() => unlistenDrag?.());
+    }
 
     // initial library fetch
     void refreshLibrary();

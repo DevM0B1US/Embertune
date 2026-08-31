@@ -1,3 +1,7 @@
+export type RepeatMode = "off" | "all" | "one";
+export type JobKind = "youtube" | "spotify";
+export type JobStatus = "queued" | "downloading" | "completed" | "cancelled" | "error";
+
 export interface Track {
   id: number;
   title: string;
@@ -14,8 +18,8 @@ export interface Track {
 export interface JobView {
   id: number;
   url: string;
-  kind: string;
-  status: string;
+  kind: JobKind;
+  status: JobStatus;
   title: string;
   percent: number;
   downloaded: number;
@@ -34,7 +38,7 @@ export interface PlayerState {
   idle: boolean;
   current: Track | null;
   shuffle: boolean;
-  repeat: string;
+  repeat: RepeatMode;
   speed: number;
 }
 

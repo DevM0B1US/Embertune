@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { closeMeta, metaOpen, metaTrack } from "../lib/state/ui";
+import { focusModal, trapModalFocus } from "../lib/modal";
 import { refreshLibrary } from "../lib/state/library";
 import { sndDone } from "../lib/sounds";
 import { fmtDur } from "../lib/format";
@@ -35,6 +36,10 @@ export default function MetaModal() {
     if (e.target === overlay) closeMeta();
   };
 
+  // focus management (audit U3)
+  createEffect(() => focusModal(metaOpen(), overlay));
+  onMount(() => onCleanup(trapModalFocus(overlay)));
+
   const bits = (b: number) => (b > 0 ? `${(b / 1000).toFixed(0)} kbps` : "—");
   const sz = (s: number) => (s > 0 ? `${(s / 1024 / 1024).toFixed(1)} MB` : "—");
 
@@ -56,7 +61,7 @@ export default function MetaModal() {
 
   return (
     <div ref={overlay} id="meta-overlay" classList={{ open: metaOpen() }} onClick={onOverlayClick}>
-      <div class="settings-card meta-card">
+      <div class="settings-card meta-card" role="dialog" aria-modal="true" aria-label="Edit track">
         <h2>Edit track</h2>
         <label>
           Title <input ref={titleInp} id="meta-title" type="text" spellcheck={false} />

@@ -23,19 +23,24 @@ import {
   toggleShuffle,
   volume,
 } from "../lib/state/player";
-import { invoke } from "@tauri-apps/api/core";
 import type { SeekTarget } from "../lib/types";
 
 // ── marquee for long now-playing lines ──────────────────────────────
 // Builds a two-copy sliding track when the text overflows; otherwise
 // leaves plain text. The source string is always passed in — never
 // read back from the DOM (a marquee element holds two copies).
+// prefers-reduced-motion (audit U5): never build the sliding track —
+// long titles simply truncate like short ones.
 function applyMarquee(el: HTMLElement, text: string): void {
   if (el.dataset.txt === text) return;
   el.dataset.txt = text;
   el.classList.remove("marquee");
   el.textContent = text;
-  if (el.scrollWidth <= el.clientWidth + 2) return;
+  if (
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+    el.scrollWidth <= el.clientWidth + 2
+  )
+    return;
   el.classList.add("marquee");
   const track = document.createElement("span");
   track.className = "m-track";
@@ -109,6 +114,10 @@ export default function Player() {
         lastFillPct = pct;
         paintSeek(pct);
       }
+      // imperative value write, deliberately (audit S9): Solid doesn't
+      // reactively update <input> values (that would clobber the user's
+      // in-flight drag), so the single-writer rAF loop writes it directly
+      // and skips while the user is on the input.
       if (document.activeElement !== seekInput) {
         seekInput.value = String(Math.min(1000, Math.round((pct / 100) * 1000)));
       }
@@ -158,26 +167,25 @@ export default function Player() {
   const [art, setArt] = createSignal<string | null>(null);
 
   // keyed on the deduped track id; cache hits apply synchronously so
-  // the previous track's art never lingers during a switch
+  // the previous track's art never lingers during a switch.
+  // NOT deferred (audit B3): with `defer: true` the effect skipped its own
+  // initial value, so reloading the page while a track was playing left the
+  // now-playing art blank until the user manually changed tracks.
   createEffect(
-    on(
-      currentId,
-      (id) => {
-        if (id === null) {
-          setArt(null);
-          return;
-        }
-        const cached = artCache.get(id);
-        setArt(cached ?? null);
-        if (cached) return;
-        void resolveArt(id).then((p) => {
-          // ignore stale resolutions if the user skipped ahead
-          if (currentId() !== id) return;
-          setArt(p);
-        });
-      },
-      { defer: true }
-    )
+    on(currentId, (id) => {
+      if (id === null) {
+        setArt(null);
+        return;
+      }
+      const cached = artCache.get(id);
+      setArt(cached ?? null);
+      if (cached) return;
+      void resolveArt(id).then((p) => {
+        // ignore stale resolutions if the user skipped ahead
+        if (currentId() !== id) return;
+        setArt(p);
+      });
+    })
   );
 
   // entrance animation when the track changes
@@ -336,8 +344,17 @@ export default function Player() {
           max="100"
           value={volume()}
           title="Volume"
-          onPointerDown={() => setVolumeBusy(true)}
+          // pointer capture (audit B6): releasing the slider outside the
+          // input fires pointerup on whatever element is under the pointer,
+          // which used to leave volumeBusy stuck true and the store could
+          // no longer update the slider. Capturing the pointer routes every
+          // event (including the release) back to this input.
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setVolumeBusy(true);
+          }}
           onPointerUp={() => setVolumeBusy(false)}
+          onLostPointerCapture={() => setVolumeBusy(false)}
           onBlur={() => setVolumeBusy(false)}
           onInput={() => setVolume(Number(volInput.value))}
         />

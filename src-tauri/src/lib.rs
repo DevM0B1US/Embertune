@@ -3,50 +3,14 @@ mod db;
 mod downloader;
 mod player;
 mod settings;
+mod util;
 
 use db::{Db, NewTrack, Track};
 use downloader::{DownloadManager, JobView};
 use player::{Player, PlayerState};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
-
-fn is_audio_file(name: &str) -> bool {
-    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    matches!(
-        ext.as_str(),
-        "mp3" | "m4a"
-            | "m4b"
-            | "flac"
-            | "ogg"
-            | "oga"
-            | "opus"
-            | "wav"
-            | "webm"
-            | "aac"
-            | "aif"
-            | "aiff"
-            | "wma"
-            | "mka"
-    )
-}
-
-fn split_title(stem: &str) -> (String, String) {
-    if let Some(i) = stem.find(" - ") {
-        let artist = stem[..i].trim();
-        let title = stem[i + 3..].trim();
-        if !artist.is_empty() && !title.is_empty() {
-            return (artist.to_string(), title.to_string());
-        }
-    }
-    (String::new(), stem.to_string())
-}
-
-fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
+use util::{is_audio_file, split_title, unix_now};
 
 /// Register every audio file in the download dir that isn't in the DB yet so
 /// songs downloaded outside the app (or before the DB existed) still appear in
@@ -86,7 +50,7 @@ fn scan_music_dir(db: &Arc<Db>, dir: &std::path::Path) -> usize {
             path: path_s.clone(),
             source_url: String::new(),
             source: "local".into(),
-            added_at: now_unix(),
+            added_at: unix_now(),
         };
         if db.add_track(&nt).is_ok() {
             let _ = art::extract_cover(&path_s);
@@ -129,6 +93,8 @@ fn validate_download_url(url: &str) -> Result<String, String> {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
+    // Download URLs only. lrclib.net used to be listed here but is a lyrics
+    // API host, never a download source (audit A10) — removed.
     const ALLOWED_HOSTS: &[&str] = &[
         "youtube.com",
         "www.youtube.com",
@@ -136,12 +102,38 @@ fn validate_download_url(url: &str) -> Result<String, String> {
         "music.youtube.com",
         "open.spotify.com",
         "spotify.com",
-        "lrclib.net",
     ];
     if ALLOWED_HOSTS.iter().any(|h| *h == host) {
         Ok(trimmed.to_string())
     } else {
         Err(format!("host '{host}' is not on the allowlist"))
+    }
+}
+
+/// Allowlist for user-supplied filesystem paths (audit SE8/SE9). The path
+/// itself — or, for directories that don't exist yet, its nearest existing
+/// ancestor — must live inside the user's home directory. The webview
+/// normally routes these through the native directory dialog, but the raw
+/// command surface must not trust it (an XSS that could call commands could
+/// otherwise point the download dir at `/` or add arbitrary files).
+fn path_inside_home(raw: &str) -> bool {
+    let p = std::path::Path::new(raw);
+    if !p.is_absolute() {
+        return false;
+    }
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    let mut probe = p.to_path_buf();
+    loop {
+        match std::fs::canonicalize(&probe) {
+            Ok(abs) => return abs.starts_with(&home),
+            Err(_) => {
+                if !probe.pop() {
+                    return false;
+                }
+            }
+        }
     }
 }
 
@@ -152,18 +144,8 @@ fn add_download(dm: State<DownloadManager>, url: String) -> Result<u64, String> 
 }
 
 #[tauri::command]
-fn cancel_download(dm: State<DownloadManager>, id: u64) {
-    dm.cancel(id);
-}
-
-#[tauri::command]
 fn list_downloads(dm: State<DownloadManager>) -> Vec<JobView> {
     dm.list()
-}
-
-#[tauri::command]
-fn clear_downloads(dm: State<DownloadManager>) {
-    dm.clear_finished();
 }
 
 #[tauri::command]
@@ -197,6 +179,10 @@ fn remove_track(
 
 #[tauri::command]
 fn add_local_file(db: State<Arc<Db>>, path: String) -> Result<bool, String> {
+    // Audit SE9: never index files outside the user's home directory.
+    if !path_inside_home(&path) {
+        return Err("path is outside the home directory".into());
+    }
     let p = std::path::Path::new(&path);
     // Validate: file must exist, be a regular file, and have an audio extension.
     if !p.is_file() {
@@ -260,11 +246,6 @@ fn play_track(p: State<Player>, id: i64) {
 #[tauri::command]
 fn toggle_play(p: State<Player>) {
     p.toggle_play();
-}
-
-#[tauri::command]
-fn player_stop(p: State<Player>) {
-    p.stop();
 }
 
 #[tauri::command]
@@ -340,8 +321,14 @@ fn set_spotify_creds(
 }
 
 #[tauri::command]
-fn set_download_dir(s: State<Arc<settings::SettingsStore>>, dir: String) {
+fn set_download_dir(s: State<Arc<settings::SettingsStore>>, dir: String) -> Result<(), String> {
+    // Audit SE8: reject paths outside the home directory (an XSS that could
+    // call commands could otherwise aim the downloader at `/` or `/etc`).
+    if !path_inside_home(&dir) {
+        return Err("download directory must be inside your home directory".into());
+    }
     s.set_download_dir(dir);
+    Ok(())
 }
 
 #[tauri::command]
@@ -475,13 +462,6 @@ fn tail_str(b: &[u8], max: usize) -> String {
     }
 }
 
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 #[tauri::command]
 fn set_favorite(db: State<Arc<Db>>, id: i64, favorite: bool) -> Result<(), String> {
     db.set_favorite(id, favorite).map_err(|e| e.to_string())
@@ -512,16 +492,6 @@ fn set_repeat(p: State<Player>, mode: String) {
 #[tauri::command]
 fn set_speed(p: State<Player>, speed: f64) {
     p.set_speed(speed);
-}
-
-#[tauri::command]
-fn set_fade(s: State<Arc<settings::SettingsStore>>, enabled: bool, duration: f64) {
-    s.set_fade(enabled, duration);
-}
-
-#[tauri::command]
-fn set_effect(p: State<Player>, effect: String) {
-    p.set_effect(effect);
 }
 
 #[tauri::command]
@@ -694,27 +664,6 @@ fn set_sleep_timer(s: State<Arc<settings::SettingsStore>>, minutes: Option<i64>)
     s.set_sleep_timer(minutes);
 }
 
-#[tauri::command]
-fn get_art(db: State<Arc<Db>>, track_id: i64) -> Option<String> {
-    use base64::Engine;
-    // Resolve the real path from the DB — never trust a raw path from the webview.
-    let track_path = db.get_track(track_id).ok().flatten()?.path;
-    let p = art::art_path_for(&track_path);
-    std::fs::read(&p)
-        .ok()
-        .map(|b| format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(b)))
-}
-
-#[tauri::command]
-fn extract_art(db: State<Arc<Db>>, track_id: i64) -> bool {
-    // Resolve the real path from the DB — never trust a raw path from the webview.
-    let track_path = match db.get_track(track_id).ok().flatten() {
-        Some(t) => t.path,
-        None => return false,
-    };
-    art::extract_cover(&track_path)
-}
-
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -847,15 +796,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             add_download,
-            cancel_download,
             list_downloads,
-            clear_downloads,
             get_library,
             remove_track,
             add_local_file,
             play_track,
             toggle_play,
-            player_stop,
             player_next,
             player_prev,
             player_seek,
@@ -875,16 +821,53 @@ pub fn run() {
             set_repeat,
             set_speed,
             set_sleep_timer,
-            set_fade,
-            set_effect,
             set_window_controls,
             window_minimize,
             window_toggle_maximize,
             window_close,
             get_lyrics,
-            get_art,
-            extract_art,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_supported_hosts_and_schemes() {
+        for url in [
+            "https://youtube.com/watch?v=abc",
+            "https://www.youtube.com/watch?v=abc",
+            "https://youtu.be/abc",
+            "https://music.youtube.com/watch?v=abc",
+            "https://open.spotify.com/track/abc",
+            "spotify:track:abc",
+        ] {
+            assert!(validate_download_url(url).is_ok(), "{url} should pass");
+        }
+    }
+
+    #[test]
+    fn rejects_argument_injection_and_bad_hosts() {
+        assert!(validate_download_url("").is_err());
+        assert!(validate_download_url("-o/etc/passwd").is_err());
+        assert!(validate_download_url("ftp://youtube.com/x").is_err());
+        assert!(validate_download_url("https://evil.example.com/x").is_err());
+        // lrclib.net is a lyrics host, not a download source (A10)
+        assert!(validate_download_url("https://lrclib.net/api/get").is_err());
+    }
+
+    #[test]
+    fn trims_whitespace() {
+        let v = validate_download_url("  https://youtu.be/abc  ").unwrap();
+        assert_eq!(v, "https://youtu.be/abc");
+    }
+
+    #[test]
+    fn path_allowlist_rejects_non_home_paths() {
+        // A relative path is never accepted.
+        assert!(!path_inside_home("relative/dir"));
+    }
 }

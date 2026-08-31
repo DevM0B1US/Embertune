@@ -397,6 +397,17 @@
   #track-list .track:hover .trow { background: rgba(255, 255, 255, 0.02); }
 }
 
+/* keyboard-selected row (audit U1) — mirrors the hover look exactly, so
+   the list's appearance is unchanged until the user navigates with keys.
+   The focus outline on the listbox itself is dropped (the selection is
+   the visible focus indicator). */
+#track-list .track.selected .trow {
+  background: var(--bg-3);
+}
+#track-list:focus {
+  outline: none;
+}
+
 /* ensure topbar buttons always clickable despite drag region */
 #topbar .tbtn, #topbar .btn { pointer-events: auto !important; position: relative; z-index: 70; -webkit-app-region: no-drag; app-region: no-drag; }
 #btn-sleep { pointer-events: auto !important; }

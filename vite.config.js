@@ -14,4 +14,11 @@ export default defineConfig({
     emptyOutDir: true,
     target: "es2021",
   },
+  // vitest (audit TE1) — pure-logic unit tests; component behavior is
+  // covered by the Playwright verification scripts in the repo tooling
+  test: {
+    environment: "node",
+    // root is "src" (vite root) — patterns are root-relative
+    include: ["**/*.test.ts"],
+  },
 });
