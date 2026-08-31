@@ -2,6 +2,8 @@
   "name": "embertune",
   "private": true,
   "version": "0.1.0",
+  "description": "A fast, local-first music player with a built-in YouTube / Spotify ripper",
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "vite",

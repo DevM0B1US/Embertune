@@ -1,8 +1,9 @@
 [package]
 name = "embertune"
 version = "0.1.0"
-description = "A local music player with smart library tools"
-authors = ["you"]
+description = "A fast, local-first music player with a built-in YouTube / Spotify ripper"
+license = "GPL-3.0-or-later"
+authors = ["Embertune contributors"]
 edition = "2021"
 
 [lib]
