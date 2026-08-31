@@ -13,7 +13,7 @@
   <a href="https://github.com/DevM0B1US/Embertune/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/DevM0B1US/Embertune/ci.yml?branch=main&label=CI" alt="CI status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-orange" alt="License: GPL v3" /></a>
   <img src="https://img.shields.io/badge/Tauri-2-blue" alt="Tauri 2" />
-  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey" alt="Platform" />
+  <img src="https://img.shields.io/badge/platform-Linux-lightgrey" alt="Platform: Linux" />
 </p>
 
 ---
@@ -54,8 +54,11 @@ Debian/Ubuntu (the .deb install pulls these in automatically):
 
   (The in-app "Update engines" button installs it too.)
 
-Other distros: same package names (`pacman`/`dnf` equivalents apply). Windows:
-install yt-dlp, ffmpeg, mpv and Python on PATH.
+Other distros: same package names (`pacman`/`dnf` equivalents apply).
+
+> **Windows:** not supported yet — the backend talks to mpv over a Unix
+> socket and stores data under `~/.local/share`. Porting needs a
+> named-pipe IPC layer; contributions welcome.
 
 ## Spotify setup
 
@@ -106,10 +109,10 @@ Releases are automatic — no manual packaging:
 
 1. Bump `"version"` in `src-tauri/tauri.conf.json` (e.g. `0.1.0` → `0.2.0`)
 2. Commit and push to `main`
-3. The `release` workflow tags `v0.2.0`, the `build` workflow then compiles
-   every target and publishes the GitHub release with installers attached:
-   `.deb` (Debian/Ubuntu), `.rpm` (Fedora), `.AppImage` (Arch & any distro),
-   `-setup.exe` / `.msi` (Windows)
+3. The `release` workflow tags `v0.2.0`, the build workflow then compiles
+   and publishes the GitHub release with installers attached:
+   `.deb` (Debian/Ubuntu), `.rpm` (Fedora/RHEL), `.AppImage` (Arch & any
+   distro)
 
 Pushes that don't change the version never create a release. Prebuilt binaries
 live on the [Releases page](https://github.com/DevM0B1US/Embertune/releases).
