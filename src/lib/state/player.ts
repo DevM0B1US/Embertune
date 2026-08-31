@@ -176,7 +176,10 @@ const playerOwner = createRoot(() => {
     }, 1500);
   }
 
-  const togglePlay = (): void => void invoke("toggle_play");
+  const togglePlay = (): void => {
+    setPlayer((p) => ({ ...p, playing: !p.playing }));
+    void invoke("toggle_play");
+  };
   const nextTrack = (): void => void invoke("player_next");
   const prevTrack = (): void => void invoke("player_prev");
   const seekTo = (secs: number): void =>
