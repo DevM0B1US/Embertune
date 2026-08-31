@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount } from "solid-js";
-import TrackRow, { markColdRender, notifyScrollVelocity } from "./TrackRow";
+import TrackRow, { markColdRender, notifyScrollActivity } from "./TrackRow";
 import { takeScrollReset, viewItems, viewKey } from "../lib/state/library";
 import { dlList } from "../lib/state/downloads";
 import type { Track } from "../lib/types";
@@ -19,7 +19,8 @@ import type { Track } from "../lib/types";
 //    store merges unchanged tracks), so scrolling, filtering and
 //    background refreshes never recreate rows wholesale — no flashing.
 //  · Entrance cascades replay only when the visible id sequence
-//    actually changes (viewKey), not on scroll or no-op refreshes.
+//    actually changes (viewKey); rows mounted by scrolling fade in
+//    immediately with zero delay (see TrackRow).
 // ═══════════════════════════════════════════════════════════════════
 
 const BUFFER = 10; // extra rows rendered above/below the viewport
@@ -48,7 +49,7 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
     // set before any newly created row mounts
     if (key !== lastKey) {
       lastKey = key;
-      markColdRender(start);
+      markColdRender();
     }
     return { start, slice: items.slice(start, end) };
   });
@@ -58,23 +59,15 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
     setMounted(true);
     setViewportH(view.clientHeight);
 
-    // ── scroll → rAF-coalesced window updates + velocity marker ────
+    // ── scroll → rAF-coalesced window updates + art-load gating ────
     let rafPending = false;
-    let prevTop = -1;
-    let prevAt = performance.now();
     const onScroll = () => {
       if (rafPending) return;
       rafPending = true;
       requestAnimationFrame(() => {
         rafPending = false;
-        const st = view.scrollTop;
-        const now = performance.now();
-        const dt = now - prevAt;
-        const vel = prevTop >= 0 && dt > 0 ? Math.abs(st - prevTop) / dt : 0;
-        prevTop = st;
-        prevAt = now;
-        notifyScrollVelocity(vel);
-        setScrollTop(st);
+        notifyScrollActivity();
+        setScrollTop(view.scrollTop);
       });
     };
     view.addEventListener("scroll", onScroll, { passive: true });

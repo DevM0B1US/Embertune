@@ -234,3 +234,90 @@ Automated browser checks executed: row-count bounds at 3k/20k/50k tracks; window
 | `3534d22` | feat(scrollbar): auto-fade overlay scrollbar + inertial wheel scrolling |
 | `22cacd0` | chore(cleanup): remove dead code, dedupe CSS, cache lyrics elements |
 | *(this commit)* | docs: EMBERTUNE_AUDIT_AND_IMPROVEMENTS.md |
+
+---
+
+## 10. Post-delivery Addendum — Scroll Row Entrance Fix (follow-up report)
+
+**User report after v1:** while scrolling, some rows appeared "late" — a row at the
+center/bottom showed instantly while its neighbours stayed invisible for a beat, in a
+seemingly random order ("like multithreading").
+
+### Root cause (v1 code, `TrackRow.tsx`)
+
+Rows mounted by scrolling played a "micro-stagger" whose delay came from a cumulative
+batch counter:
+
+```ts
+} else if (lastVel < 4) {
+  animateIn(trow, batchN++ * 12, true);   // batchN reset ONLY on view change
+}
+```
+
+Two defects interacted:
+
+1. **`batchN` was never reset between scroll batches** — only by `markColdRender()` on a
+   viewKey change. After scrolling past N rows, every newly mounted row carried a
+   `N × 12ms` delay, growing without bound during a session. With `fill: "backwards"`,
+   a delayed animation *holds the row at opacity 0* until the delay elapses — the row
+   is mounted, laid out, and invisible: "loads late".
+2. **The `lastVel < 4` velocity gate was sampled per-rAF** and fluctuated around the
+   threshold during a fling's deceleration. Batches alternating between "animate with a
+   huge accumulated delay" and "skip animation entirely" produced the random
+   center-appears-first / neighbours-appear-late pattern.
+
+### Fix
+
+Entrance behaviour is now split strictly by **when** a row mounts:
+
+| Mount reason | Animation | Why it can't read as "late" |
+|---|---|---|
+| View change (`viewKey`: search / sort / refresh with new content) | staggered cascade — 22 ms/row from the window's first row, **capped at 320 ms** (the cap documented in v1 but never implemented) | intended effect; replays only on real content changes |
+| Scrolling (window edge enters the buffer) | **80 ms pure-opacity fade, delay 0** | a zero-delay fade is fully opaque one frame+80 ms after mount; rows mount 10 rows (~560 px) below the viewport, so the fade normally completes *before* the row scrolls into view |
+| `prefers-reduced-motion` | none | — |
+
+The cumulative counter and the velocity heuristic were **deleted entirely** (no
+per-scroll-frame heuristics remain). The cascade anchor index is now taken from the
+first row that mounts after `markColdRender()`, which also fixes a v1 edge case: a
+filter change while scrolled deep used to degenerate into a simultaneous fade because
+the anchor was captured from the pre-scroll-reset window offset.
+
+### Second fix from the same report: scroll lag spikes on real libraries
+
+User report: "scrolling through my current 124 songs is laggy — lag spikes." At 124
+tracks the virtualized list itself does almost no work, so the spikes came from
+elsewhere: each row entering the 600 px preload margin fired a real `get_art` IPC round
+trip whose response ends in a **main-thread image decode** — a burst of those during a
+gesture is exactly a series of frame drops (the dev mock returns instantly and hides
+this path).
+
+Fix — art load scheduling in `TrackRow.tsx`:
+
+- while the list is actively scrolling, entering rows' art loads are **queued, not
+  started** (`notifyScrollActivity()` is called from the list's rAF-coalesced scroll
+  handler);
+- ~150 ms after the last scroll event the queue **flushes in chunks of 6 every 50 ms**,
+  spreading decodes over several frames;
+- cached art (`artCache`, synchronous) is unaffected, so steady-state scrolling never
+  queues anything;
+- row `<img>` elements now carry `decoding="async"`.
+
+### Verification (headless Chromium via the dev harness, 20 000 tracks)
+
+`Element.prototype.animate` was wrapped at boot to log every row animation; each
+scenario waits for genuine quiescence (no scroll events for 250 ms, then zero running
+row animations) before sampling:
+
+- view-load cascade replays staggered (21 anims, max delay 320 ms) and settles fully
+  opaque;
+- hard fling (60 k px): **416 scroll-in animations, 100 % zero-delay, 0 staggered**;
+  viewport fully opaque after settle;
+- ~30 s scroll session: 970 scroll-ins, still zero stagger, DOM row count bounded
+  (32), fully opaque;
+- search replays the capped cascade and settles opaque; scrollbar teleport produces no
+  phantom cascade;
+- mega-fling (120 k px) settles clean;
+- art deferral: 0 `get_art` calls during the gesture, queue flushed after settle,
+  12/12 visible rows with art.
+
+DOM row count stayed at ~32 for a 20 000-track library in every scenario.
