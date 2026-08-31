@@ -23,14 +23,15 @@ import type { Track } from "../lib/types";
 //      capped at 320ms. Rows of one cold batch mount in a single
 //      synchronous diff pass, so the anchor index is taken from the
 //      first row that mounts after markColdRender().
-//    · rows entering while scrolling: a SHORT batch-anchored
-//      micro-cascade — 14ms per row within the mount batch, hard-capped
-//      at 120ms. Every scroll batch re-anchors (rows mounting >60ms
-//      apart start a new batch), so delays can never accumulate across
-//      a session. Safety: rows mount ~BUFFER×rowH (≈560px) below the
-//      viewport, and even a violent 3000px/s fling needs ~190ms to
-//      reach them — the ≤120ms hold is always spent off-screen, yet
-//      the eye still sees rows appearing one by one.
+//    · rows entering while scrolling: a CONTINUOUS per-gesture ripple —
+//      each mounted row steps a shared delay forward (16ms), hard-capped
+//      at 120ms; a quiet gap >350ms (the gesture ended) resets it. The
+//      cap makes runaway accumulation impossible (the v1 bug), and the
+//      carry-through means mid-gesture lulls no longer produce delay-0
+//      rows that pop in instantly against a rippling background (v3
+//      batch resets did exactly that — user-visible as random "instant"
+//      rows among cascading ones). Mount order = slice order, so the
+//      ripple always reads top-to-bottom.
 //    · prefers-reduced-motion: no animation at all.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -45,11 +46,11 @@ const COLD_WINDOW_MS = 400; // rows mounting this soon after a view change are c
 const CASCADE_STEP_MS = 22; // per-row cascade delay
 const CASCADE_CAP_MS = 320; // never stagger longer than this
 
-// scroll-in micro-cascade (batch-anchored — see header comment)
+// scroll-in ripple (per-gesture — see header comment)
 let lastRowMountAt = -1e9;
-let scrollAnchorIdx = 0;
-const SCROLL_BATCH_GAP_MS = 60; // a quiet gap this long starts a new batch
-const SCROLL_STEP_MS = 14; // per-row delay inside a scroll batch
+let rippleDelay = 0;
+const GESTURE_END_MS = 350; // quiet gap this long ends the gesture
+const SCROLL_STEP_MS = 16; // per-row delay step inside a gesture
 const SCROLL_CAP_MS = 120; // hard cap — holds are always spent off-screen
 
 /** Called by TrackList when the visible id sequence changes (viewKey). */
@@ -192,8 +193,9 @@ export default function TrackRow(props: {
 
   onMount(() => {
     // entrance animation — cold cascade (view change) vs scroll-in
-    // micro-cascade. Scroll batches re-anchor on every quiet gap, so
-    // delays stay within [0, SCROLL_CAP_MS] forever.
+    // ripple. The ripple carries across mid-gesture lulls and only
+    // resets when scrolling has truly stopped, so rows never pop in
+    // at delay 0 among cascading neighbours.
     const trow = li.firstElementChild as HTMLElement | null;
     if (trow && !REDUCED_MOTION.matches) {
       const now = performance.now();
@@ -204,9 +206,12 @@ export default function TrackRow(props: {
         }
         animateCascade(trow, (absIndex() - coldStartIdx) * CASCADE_STEP_MS);
       } else {
-        if (now - lastRowMountAt > SCROLL_BATCH_GAP_MS) scrollAnchorIdx = absIndex();
+        rippleDelay =
+          now - lastRowMountAt > GESTURE_END_MS
+            ? SCROLL_STEP_MS
+            : Math.min(rippleDelay + SCROLL_STEP_MS, SCROLL_CAP_MS);
         lastRowMountAt = now;
-        animateScrollIn(trow, (absIndex() - scrollAnchorIdx) * SCROLL_STEP_MS);
+        animateScrollIn(trow, rippleDelay);
       }
     }
 

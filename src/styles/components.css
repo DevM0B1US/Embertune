@@ -21,6 +21,35 @@
   contain: layout;
 }
 
+/* --- brand mark --- */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  align-self: center;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.brand-mark {
+  width: 24px;
+  height: 24px;
+  display: block;
+  filter: drop-shadow(0 0 7px rgba(255, 138, 60, 0.5));
+}
+
+.brand-name {
+  font-size: 13.5px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.brand-name b {
+  color: var(--accent-2);
+}
+
 /* --- sleep timer popup — standardized --- */
 #sleep-pop {
   position: absolute;
@@ -1493,6 +1522,35 @@ input[type="range"]::-webkit-slider-thumb:hover {
   border: 2px solid var(--accent);
   border-radius: 12px;
   box-shadow: none;
+  /* fullscreen POPS in (scale + fade) — never the drawer slide */
+  transform: scale(0.96);
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
+}
+
+#lyrics-panel.fs.open {
+  transform: scale(1);
+  opacity: 1;
+  pointer-events: auto;
+  animation: lyrics-fs-pop 0.28s cubic-bezier(0.34, 1.35, 0.64, 1) both;
+}
+
+@keyframes lyrics-fs-pop {
+  from {
+    transform: scale(0.93);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #lyrics-panel.fs.open {
+    animation: none;
+  }
 }
 
 #lyrics-panel.fs .lyrics-text {

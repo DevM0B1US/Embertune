@@ -19,8 +19,8 @@ import type { Track } from "../lib/types";
 //    store merges unchanged tracks), so scrolling, filtering and
 //    background refreshes never recreate rows wholesale — no flashing.
 //  · Entrance cascades replay only when the visible id sequence
-//    actually changes (viewKey); rows mounted by scrolling run a short
-//    batch-anchored micro-cascade (≤120ms, see TrackRow).
+//    actually changes (viewKey); rows mounted by scrolling run a
+//    continuous per-gesture ripple (≤120ms cap, see TrackRow).
 // ═══════════════════════════════════════════════════════════════════
 
 const BUFFER = 10; // extra rows rendered above/below the viewport

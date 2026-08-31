@@ -20,6 +20,7 @@ import {
 } from "../lib/sleep";
 import { Ico } from "../lib/icons";
 import { Mic, Minus, Maximize, Settings, Timer, X } from "lucide";
+import logoUrl from "../assets/logo.svg";
 
 // ── url input ───────────────────────────────────────────────────────
 function autoGrow(el: HTMLTextAreaElement): void {
@@ -120,6 +121,18 @@ export default function Topbar() {
 
   return (
     <header id="topbar" data-tauri-drag-region="">
+      <div class="brand" title="Embertune" data-tauri-drag-region="true">
+        <img
+          class="brand-mark"
+          src={logoUrl}
+          alt="Embertune"
+          draggable={false}
+          data-tauri-drag-region="false"
+        />
+        <span class="brand-name" data-tauri-drag-region="true">
+          Ember<b>tune</b>
+        </span>
+      </div>
       <textarea
         ref={urlInput}
         id="url-input"

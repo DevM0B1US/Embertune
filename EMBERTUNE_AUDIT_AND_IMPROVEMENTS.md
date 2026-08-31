@@ -412,3 +412,60 @@ are unaffected.
 `register_asynchronous_uri_scheme_protocol` API; this environment has no Rust
 toolchain, so run `cargo check`/`cargo tauri dev` on the dev machine to
 compile-verify (`src-tauri/src/lib.rs`).
+
+## 12. Post-delivery Addendum 3 — Ripple Polish, Fullscreen Pop, Brand & CI
+
+**User feedback after v4:** the scroll cascade satisfies, but individual rows
+still popped in *instantly* among the cascading ones; fullscreen lyrics should
+pop, not slide; new minimalist logo wanted; GitHub CI builds for
+Debian/Windows (+ Fedora/Arch if possible).
+
+### 12.1 No more instant rows — continuous per-gesture ripple
+
+Root cause of the "instant" rows: the v3 micro-cascade re-anchored every time
+two row mounts were >60 ms apart — and mid-gesture lulls (smooth-wheel
+easing, frame pacing) produced exactly such gaps, so the next row mounted at
+delay 0 and popped against its rippling neighbours.
+
+`TrackRow.tsx` now runs a **continuous per-gesture ripple**: one shared delay
+steps +16 ms per mounted row (hard cap 120 ms — runaway accumulation stays
+impossible) and only resets after >350 ms of quiet (the gesture truly ended).
+Mid-gesture lulls carry the ripple forward instead of restarting it, so every
+scroll-in row joins the top-to-bottom flow — never a delay-0 pop. Verification
+saw **416/416 scroll-in animations staggered** across a 60 k-px fling, cap held
+over a 20-fling continuous gesture (max 120 ms), and the ripple cleanly
+resetting to 16 ms after a pause. 20/20 checks pass.
+
+### 12.2 Fullscreen lyrics pops in
+
+`#lyrics-panel.fs` no longer inherits the drawer's slide-from-right. Entering
+fullscreen plays a springy scale+fade pop (`lyrics-fs-pop`, 280 ms), disabled
+under `prefers-reduced-motion`; the rounded accent outline from addendum 2 is
+kept. Non-fullscreen drawer behaviour is unchanged.
+
+### 12.3 New brand: ember-tune mark
+
+Hand-drawn minimalist SVG (`src/assets/logo.svg`) matching the reference:
+an eighth note whose flag is a licking flame — hot-yellow to deep-orange
+gradient, molten notehead with a dark rim + warm core, soft halo, and a spark
+dot. Deployed to:
+
+- the topbar brand (mark + "Ember**tune**" wordmark, glow drop-shadow),
+- the favicon (`src/public/favicon.svg`),
+- all native bundle icons regenerated via `tauri icon` (ico, icns, pngs).
+
+### 12.4 GitHub Actions build pipeline
+
+`.github/workflows/build.yml` (tauri-action) builds on push of a `v*` tag and
+publishes a GitHub release with:
+
+- **Debian/Ubuntu** — `.deb`
+- **Fedora/RHEL** — `.rpm`
+- **Arch & any distro** — `.AppImage` (single-file, no package needed)
+- **Windows** — `-setup.exe` (NSIS) + `.msi` (WiX)
+
+Manual `workflow_dispatch` runs build-only (artifacts on the run, no release).
+`tauri.conf.json` bundle targets set to `all`. Rust caching via
+`swatinem/rust-cache`. Note: the Linux runtime still needs `yt-dlp`, `ffmpeg`
+and `mpv` installed on the user's system (stated in the release body and the
+deb `depends`).
