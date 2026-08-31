@@ -1534,8 +1534,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
   line-height: 1.65;
   opacity: 0.55;
   transform: translateX(0);
+  /* font-size is animated too: the fullscreen active line grows
+     23px → 29px, and without it the layout snaps every line change
+     (reads as flicker) instead of easing */
   transition: color 0.35s ease, background-color 0.35s ease, opacity 0.35s ease,
-    transform 0.35s ease;
+    transform 0.35s ease, font-size 0.35s ease;
 }
 
 .lrc-line.active {

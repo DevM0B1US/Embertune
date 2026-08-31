@@ -1,9 +1,9 @@
-import { createEffect, createSignal, For, on, onCleanup, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, untrack } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { Maximize, Minimize, X } from "lucide";
 import { Ico } from "../lib/icons";
 import { parseLrc, type LrcLine } from "../lib/lrc";
-import { currentId, player } from "../lib/state/player";
+import { player } from "../lib/state/player";
 import { lyricsFs, lyricsOpen, setLyricsFs, setLyricsOpen } from "../lib/state/ui";
 
 // ── lyrics parsing lives in lib/lrc.ts (unit-tested) ───────────────
@@ -21,6 +21,36 @@ export default function LyricsPanel() {
   let lrcReq = 0;
   let lrcScrollRaf = 0;
   let lrcLastAuto = 0;
+  let lrcTarget = -1;
+  // auto-follow pauses briefly after the user scrolls the panel
+  // themselves, so it doesn't drag them back mid-read (Spotify-style)
+  let followPausedUntil = 0;
+  const FOLLOW_PAUSE_MS = 4000;
+
+  // ── interpolated playback clock ───────────────────────────────────
+  // get_player_state only rewrites state every 500ms while playing, so
+  // driving the highlight from raw poll positions makes it trail up to
+  // half a second behind the song. Anchor on the latest poll and
+  // extrapolate locally between polls instead.
+  let clockPos = 0;
+  let clockAt = 0;
+  let clockPlaying = false;
+  let clockSpeed = 1;
+
+  function nowPos(): number {
+    if (!clockPlaying) return clockPos;
+    return clockPos + ((performance.now() - clockAt) / 1000) * clockSpeed;
+  }
+
+  // re-anchor the clock on every poll write; runs unconditionally but
+  // only writes four plain variables
+  createEffect(() => {
+    const ps = player();
+    clockPos = ps.position;
+    clockAt = performance.now();
+    clockPlaying = ps.playing;
+    clockSpeed = ps.speed > 0 ? ps.speed : 1;
+  });
 
   // rAF-driven scroll — native smooth gets restarted/stutters in WebKit
   // (prefers-reduced-motion, audit U5: no eased glide — jump straight)
@@ -28,9 +58,14 @@ export default function LyricsPanel() {
     cancelAnimationFrame(lrcScrollRaf);
     const start = box.scrollTop;
     const diff = target - start;
-    if (Math.abs(diff) < 1) return;
+    if (Math.abs(diff) < 1) {
+      lrcTarget = -1;
+      return;
+    }
+    lrcTarget = target;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       box.scrollTop = target;
+      lrcTarget = -1;
       return;
     }
     const dur = Math.min(450, 120 + Math.abs(diff) * 0.35);
@@ -41,6 +76,7 @@ export default function LyricsPanel() {
       lrcLastAuto = performance.now();
       box.scrollTop = start + diff * ease(p);
       if (p < 1) lrcScrollRaf = requestAnimationFrame(step);
+      else lrcTarget = -1;
     };
     lrcScrollRaf = requestAnimationFrame(step);
   }
@@ -48,7 +84,7 @@ export default function LyricsPanel() {
   function updateLyrics(): void {
     const lines = lrcLines();
     if (!lines.length) return;
-    const pos = player().position;
+    const pos = nowPos();
     let cur = 0;
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].t <= pos) cur = i;
@@ -65,6 +101,8 @@ export default function LyricsPanel() {
     // out of the band — most line-to-line advances never scroll
     const el = lineEls[cur];
     if (!el) return;
+    // user is browsing — keep the highlight moving, pause the scrolling
+    if (performance.now() < followPausedUntil) return;
     const bigJump = prev < 0 || cur - prev > 2;
     const elTop = el.offsetTop - box.offsetTop;
     const elBottom = elTop + el.offsetHeight;
@@ -76,16 +114,26 @@ export default function LyricsPanel() {
       const target = Math.min(max, Math.max(0, elTop - box.clientHeight / 2 + el.offsetHeight / 2));
       if (bigJump) {
         lrcLastAuto = performance.now();
+        lrcTarget = -1;
         box.scrollTop = target;
       } else {
+        // a glide already heading to this spot must not restart —
+        // restarting resets its easing every poll and visibly pulses
+        if (lrcTarget >= 0 && Math.abs(target - lrcTarget) < 4) return;
         lrcScrollTo(target);
       }
     }
   }
 
-  async function loadLyrics(retryDelay = 0): Promise<void> {
-    if (retryDelay > 0) await new Promise((r) => setTimeout(r, retryDelay));
+  // which track the visible content belongs to — reopening the panel
+  // for the same track skips the fetch entirely (no clear + fade blink)
+  let loadedForId: number | null | undefined;
+
+  async function loadLyrics(): Promise<void> {
     const t = player().current;
+    const id = t?.id ?? null;
+    if (loadedForId === id) return;
+    loadedForId = id;
     // guard against out-of-order async resolution when tracks change fast:
     // only the latest request is allowed to write
     const req = ++lrcReq;
@@ -138,40 +186,67 @@ export default function LyricsPanel() {
     }
   }
 
-  // Load when the panel opens. loadLyrics() reads player().current
-  // synchronously — untrack it, or the whole player object becomes a
-  // dependency and lyrics reload (clearing + refetching) on every poll.
-  createEffect(() => {
-    if (lyricsOpen()) {
-      if (player().current) {
-        void untrack(loadLyrics);
-      } else {
-        // track not polled yet — retry after a short delay
-        void untrack(() => loadLyrics(300));
-      }
-    }
-  });
-  // reload when the track changes while open.
-  // currentId is a DEDUPED memo — on() alone would refire on every poll
-  // because it re-runs whenever any read signal writes, value or not.
-  createEffect(
-    on(currentId, () => {
-      if (lyricsOpen()) void untrack(loadLyrics);
-    })
-  );
-  // follow the position (poll cadence) while open
+  // The poll-confirmed track id, deduped: the raw `player` object is
+  // replaced on EVERY poll (500ms while playing), so tracking player()
+  // or player().current here re-ran loadLyrics — clear + refetch +
+  // opacity fade — twice a second while the panel was open: the
+  // "constantly flickering lyrics" bug. It also kept resetting the
+  // highlight, which is why sync looked broken. A deduped memo stays
+  // silent while nothing but the position changed.
+  const backendTrackId = createMemo(() => player().current?.id ?? null);
+
+  // Load when the panel opens; reload when the confirmed track changes.
+  // If the panel opens before the first poll lands (first F press),
+  // this fires again the moment backendTrackId goes null → id — no
+  // retry timer needed.
   createEffect(() => {
     if (!lyricsOpen()) return;
-    void player().position;
+    backendTrackId();
+    void untrack(loadLyrics);
+  });
+
+  // follow the position while open — re-sync immediately on each poll
+  // write; the 120ms ticker below covers the gaps between polls so the
+  // highlight lands on the beat instead of trailing half a second
+  createEffect(() => {
+    if (!lyricsOpen()) return;
+    void player();
     queueMicrotask(updateLyrics);
   });
-  // an in-flight auto-scroll must not keep running after the panel
-  // closes (audit P5)
+
+  // highlight cadence between polls (interpolated clock) — updateLyrics
+  // early-returns unless the active line actually changed
+  let ticker = 0;
+  const startTicker = (): void => {
+    if (ticker) return;
+    ticker = window.setInterval(() => {
+      if (clockPlaying) updateLyrics();
+    }, 120);
+  };
+  const stopTicker = (): void => {
+    window.clearInterval(ticker);
+    ticker = 0;
+  };
+
+  // ticker + scroll-anim lifecycle with the panel
   createEffect(
     on(lyricsOpen, (open) => {
-      if (!open) cancelAnimationFrame(lrcScrollRaf);
+      if (open) {
+        followPausedUntil = 0;
+        startTicker();
+      } else {
+        // an in-flight auto-scroll must not keep running after the panel
+        // closes (audit P5)
+        cancelAnimationFrame(lrcScrollRaf);
+        lrcTarget = -1;
+        stopTicker();
+      }
     })
   );
+  onCleanup(() => {
+    stopTicker();
+    cancelAnimationFrame(lrcScrollRaf);
+  });
   // leaving fullscreen re-syncs the scroll position
   createEffect(
     on(lyricsFs, (fs, prev) => {
@@ -179,9 +254,15 @@ export default function LyricsPanel() {
     })
   );
 
-  // stop auto-scrolling the instant the user grabs the scrollbar
+  // stop auto-scrolling the instant the user grabs the scrollbar — and
+  // pause auto-follow for a few seconds so it doesn't drag them back
+  // mid-read; the highlight keeps tracking, only the scrolling pauses
   const onBoxScroll = () => {
-    if (performance.now() - lrcLastAuto > 50) cancelAnimationFrame(lrcScrollRaf);
+    if (performance.now() - lrcLastAuto > 50) {
+      cancelAnimationFrame(lrcScrollRaf);
+      lrcTarget = -1;
+      followPausedUntil = performance.now() + FOLLOW_PAUSE_MS;
+    }
   };
   onCleanup(() => cancelAnimationFrame(lrcScrollRaf));
 
