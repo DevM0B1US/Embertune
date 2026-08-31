@@ -289,15 +289,72 @@
   transform: scale(0.96);
 }
 
+/* library view shell — holds the scroll container and its overlay
+   scrollbar (the thumb lives outside the scroller so it doesn't
+   translate with content) */
+.view-shell {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .view {
   position: relative;
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 0;
   -webkit-overflow-scrolling: touch;
   /* virtualized list: the browser must not re-anchor scroll offsets
      when window rows mount/unmount above the viewport */
   overflow-anchor: none;
+  /* the overlay thumb replaces the native scrollbar entirely */
+  scrollbar-width: none;
+}
+.view::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* overlay scrollbar thumb — appears on scroll, fades when idle */
+.osb-thumb {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  width: 8px;
+  height: 40px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 45;
+  transform: translateY(3px);
+  transition: opacity 0.22s ease, background 0.15s ease, width 0.12s ease;
+}
+
+.osb-thumb.osb-on {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.osb-thumb:hover,
+.osb-thumb.osb-drag {
+  background: rgba(255, 138, 70, 0.6);
+}
+
+.osb-thumb.osb-drag {
+  width: 10px;
+  right: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .osb-thumb {
+    transition: none;
+  }
 }
 
 .hidden {

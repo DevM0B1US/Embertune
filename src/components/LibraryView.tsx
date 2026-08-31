@@ -1,8 +1,10 @@
 import { Heart } from "lucide";
-import { onCleanup } from "solid-js";
+import { onCleanup, onMount } from "solid-js";
 import TrackList from "./TrackList";
 import DownloadsPanel from "./DownloadsPanel";
 import { Ico } from "../lib/icons";
+import { attachOverlayScrollbar } from "../lib/scrollbar";
+import { attachSmoothWheel } from "../smoothwheel";
 import {
   applyFavFilter,
   applySearch,
@@ -27,9 +29,21 @@ const SORTS: Array<[SortKey, string]> = [
 
 export default function LibraryView() {
   let viewEl!: HTMLElement;
+  let thumbEl!: HTMLDivElement;
   let searchInp!: HTMLInputElement;
   let searchDebounce: number | undefined;
   onCleanup(() => clearTimeout(searchDebounce));
+
+  onMount(() => {
+    // inertial wheel scrolling (WebKitGTK notchy steps) + auto-fade
+    // overlay scrollbar; the container stays the native scroller
+    const detachWheel = attachSmoothWheel(viewEl);
+    const detachScrollbar = attachOverlayScrollbar(viewEl, thumbEl);
+    onCleanup(() => {
+      detachWheel();
+      detachScrollbar();
+    });
+  });
 
   const onSearchInput = () => {
     clearTimeout(searchDebounce);
@@ -49,55 +63,58 @@ export default function LibraryView() {
   const sortLabel = () => SORTS.find(([k]) => k === sortBy())?.[1] || "Newest";
 
   return (
-    <section id="view-library" class="view" ref={viewEl}>
-      <div class="lib-bar">
-        <span class="lib-bar-title">{libTitle()}</span>
-        <div class="lib-bar-controls">
-          <input
-            ref={(el) => {
-              searchInp = el;
-              registerSearchInput(el);
-            }}
-            id="search"
-            class="lib-bar-search"
-            type="text"
-            placeholder="Search…"
-            spellcheck={false}
-            onInput={onSearchInput}
-          />
-          <button
-            class="lib-bar-sort"
-            title={`Sort: ${sortLabel()}`}
-            data-sort={sortBy()}
-            onClick={cycleSort}
-          >
-            {sortLabel()}
-          </button>
-          <button
-            class="lib-bar-fav"
-            title="Favorites only"
-            aria-label="Favorites only"
-            classList={{ active: favOnly() }}
-            onClick={() => applyFavFilter(!favOnly())}
-          >
-            <Ico node={Heart} size={15} />
-          </button>
+    <div class="view-shell">
+      <section id="view-library" class="view" ref={viewEl}>
+        <div class="lib-bar">
+          <span class="lib-bar-title">{libTitle()}</span>
+          <div class="lib-bar-controls">
+            <input
+              ref={(el) => {
+                searchInp = el;
+                registerSearchInput(el);
+              }}
+              id="search"
+              class="lib-bar-search"
+              type="text"
+              placeholder="Search…"
+              spellcheck={false}
+              onInput={onSearchInput}
+            />
+            <button
+              class="lib-bar-sort"
+              title={`Sort: ${sortLabel()}`}
+              data-sort={sortBy()}
+              onClick={cycleSort}
+            >
+              {sortLabel()}
+            </button>
+            <button
+              class="lib-bar-fav"
+              title="Favorites only"
+              aria-label="Favorites only"
+              classList={{ active: favOnly() }}
+              onClick={() => applyFavFilter(!favOnly())}
+            >
+              <Ico node={Heart} size={15} />
+            </button>
+          </div>
         </div>
-      </div>
 
-      <DownloadsPanel />
+        <DownloadsPanel />
 
-      <TrackList viewEl={viewEl} />
+        <TrackList viewEl={viewEl} />
 
-      <div
-        id="empty-library"
-        class="empty"
-        classList={{
-          hidden: viewItems().length > 0 || dlList().length > 0,
-        }}
-      >
-        {totalCount() === 0 ? "Nothing here yet. Drop a URL above." : "No matches."}
-      </div>
-    </section>
+        <div
+          id="empty-library"
+          class="empty"
+          classList={{
+            hidden: viewItems().length > 0 || dlList().length > 0,
+          }}
+        >
+          {totalCount() === 0 ? "Nothing here yet. Drop a URL above." : "No matches."}
+        </div>
+      </section>
+      <div ref={thumbEl} class="osb-thumb" />
+    </div>
   );
 }

@@ -107,13 +107,14 @@ export function attachSmoothWheel(el: HTMLElement): () => void {
     { passive: true }
   );
 
-  document.addEventListener("visibilitychange", () => {
+  const onVisChange = (): void => {
     if (document.hidden) {
       stop();
       target = el.scrollTop;
       lastSet = target;
     }
-  });
+  };
+  document.addEventListener("visibilitychange", onVisChange);
 
   // if reduced-motion gets enabled mid-session, detach
   const mqListener = (): void => {
@@ -126,6 +127,7 @@ export function attachSmoothWheel(el: HTMLElement): () => void {
 
   return () => {
     stop();
+    document.removeEventListener("visibilitychange", onVisChange);
     reduce.removeEventListener?.("change", mqListener);
   };
 }
