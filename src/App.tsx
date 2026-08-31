@@ -146,6 +146,16 @@ export default function App() {
     document.addEventListener("keydown", keyShortcuts);
     onCleanup(() => document.removeEventListener("keydown", keyShortcuts));
 
+    // prevent Tab from cycling focus through elements (desktop app, not a website)
+    const blockTab = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const el = e.target as HTMLElement;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return;
+      e.preventDefault();
+    };
+    document.addEventListener("keydown", blockTab);
+    onCleanup(() => document.removeEventListener("keydown", blockTab));
+
     // drag-and-drop audio files onto the window adds them to the library
     // (audit U10 — Tauri only; the browser mock has no real paths)
     if ("__TAURI_INTERNALS__" in window) {

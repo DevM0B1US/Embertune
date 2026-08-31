@@ -3,7 +3,7 @@ import TrackRow from "./TrackRow";
 import { useRowFx } from "./rowfx";
 import { takeScrollReset, viewItems, viewKey } from "../lib/state/library";
 import { dlList } from "../lib/state/downloads";
-import { playTrack } from "../lib/state/player";
+import { playTrack, togglePlay } from "../lib/state/player";
 import type { Track } from "../lib/types";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -122,6 +122,9 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
         if (id !== null && rowById().has(id)) {
           e.preventDefault();
           playTrack(id);
+        } else {
+          e.preventDefault();
+          togglePlay();
         }
         break;
       }
