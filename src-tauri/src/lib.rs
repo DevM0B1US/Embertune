@@ -723,6 +723,52 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
+        // ── art://<track_id> — cover art over a custom URI scheme ──────
+        //
+        // The webview fetches cover JPEGs itself: async request, off-main-
+        // thread decode, HTTP-cached. Replaces the old get_art round trip
+        // that shipped a base64 data URL over IPC and decoded it on the
+        // main thread — that burst was the scroll lag on real libraries.
+        //
+        // The id is resolved to a path through the DB inside the handler,
+        // so the webview never supplies a filesystem path (same trust
+        // model as the get_art command).
+        .register_asynchronous_uri_scheme_protocol("art", move |ctx, request, responder| {
+            // art://localhost/<id> (macOS/Linux) · http://art.localhost/<id> (Windows)
+            let id: i64 = request
+                .uri()
+                .path()
+                .trim_start_matches('/')
+                .split('.')
+                .next()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let bytes = app
+                    .state::<Arc<Db>>()
+                    .get_track(id)
+                    .ok()
+                    .flatten()
+                    .and_then(|t| std::fs::read(art::art_path_for(&t.path)).ok());
+                let resp = match bytes {
+                    Some(b) => tauri::http::Response::builder()
+                        .status(200)
+                        .header("Content-Type", "image/jpeg")
+                        .header("Cache-Control", "public, max-age=86400")
+                        .body(b),
+                    None => tauri::http::Response::builder().status(404).body(Vec::new()),
+                };
+                match resp {
+                    Ok(r) => responder.respond(r),
+                    Err(_) => {
+                        if let Ok(empty) = tauri::http::Response::builder().status(500).body(Vec::<u8>::new()) {
+                            responder.respond(empty);
+                        }
+                    }
+                }
+            });
+        })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 let app = window.app_handle();

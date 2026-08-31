@@ -5,8 +5,9 @@
 //  with no inertia — fine for documents, terrible for a music library.
 //  This intercepts wheel events over the scroll container and lerps
 //  scrollTop toward a target on its own rAF loop: buttery, inertial,
-//  and frame-rate independent (exponential smoothing with a ~55ms
-//  time constant).
+//  and frame-rate independent (exponential smoothing with a ~68ms
+//  time constant — soft enough to read as glide, tight enough that
+//  the list never feels detached from the wheel).
 //
 //  Deliberately stays out of the way of:
 //  · the scrollbar (dragging it hands control back instantly)
@@ -59,7 +60,7 @@ export function attachSmoothWheel(el: HTMLElement): () => void {
       return; // settled
     }
 
-    const k = 1 - Math.exp(-dt / 55); // ~0.26 per 60fps frame
+    const k = 1 - Math.exp(-dt / 68); // ~0.22 per 60fps frame — soft glide
     const next = cur + diff * k;
     el.scrollTop = next;
     lastSet = next;
@@ -86,7 +87,7 @@ export function attachSmoothWheel(el: HTMLElement): () => void {
       let dy = e.deltaY;
       if (e.deltaMode === 1) dy *= 16;
       else if (e.deltaMode === 2) dy *= el.clientHeight;
-      dy *= 1.12; // gentle gain — notchy wheels travel a natural distance
+      dy *= 1.15; // gentle gain — notchy wheels travel a natural distance
 
       if (raf === 0) target = el.scrollTop; // resync after external scroll
       const max = maxScroll();

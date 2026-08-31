@@ -114,10 +114,11 @@ const libraryOwner = createRoot(() => {
   });
 
   // ── artwork cache (shared with the player bar) ────────────────────
+  // entries are URLs now (art:// protocol), not base64 payloads — cheap
   const artCache = new Map<number, string>();
 
   function cacheArt(id: number, path: string): void {
-    if (artCache.size >= 160) {
+    if (artCache.size >= 512) {
       const oldest = artCache.keys().next().value;
       if (oldest !== undefined) artCache.delete(oldest);
     }

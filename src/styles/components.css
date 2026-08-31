@@ -1486,8 +1486,13 @@ input[type="range"]::-webkit-slider-thumb:hover {
 #lyrics-panel.fs {
   inset: 0;
   width: 100%;
-  border-left: none;
   z-index: 100;
+  /* fullscreen covers the whole app frame — carry the same rounded
+     outline as #app (14px outer − 2px border = 12px inner curve) so
+     the panel never squares off the app's corners */
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  box-shadow: none;
 }
 
 #lyrics-panel.fs .lyrics-text {

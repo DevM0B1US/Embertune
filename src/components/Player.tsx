@@ -2,7 +2,8 @@ import { createEffect, createMemo, createSignal, on, onCleanup, onMount } from "
 import { Music2, Pause, Play, Repeat, Shuffle, SkipBack, SkipForward } from "lucide";
 import { Ico } from "../lib/icons";
 import { fmtDur } from "../lib/format";
-import { artCache, cacheArt } from "../lib/state/library";
+import { artCache } from "../lib/state/library";
+import { resolveArt, markArtFailed } from "../lib/art";
 import {
   currentId,
   currentTrack,
@@ -169,19 +170,11 @@ export default function Player() {
         const cached = artCache.get(id);
         setArt(cached ?? null);
         if (cached) return;
-        void (async () => {
-          try {
-            const p = await invoke<string | null>("get_art", { trackId: id });
-            if (p) {
-              cacheArt(id, p);
-              if (currentId() === id) setArt(p);
-            } else {
-              setArt(null);
-            }
-          } catch {
-            setArt(null);
-          }
-        })();
+        void resolveArt(id).then((p) => {
+          // ignore stale resolutions if the user skipped ahead
+          if (currentId() !== id) return;
+          setArt(p);
+        });
       },
       { defer: true }
     )
@@ -251,7 +244,11 @@ export default function Player() {
             classList={{ hidden: !art() }}
             src={art() ?? undefined}
             alt=""
-            onError={() => setArt(null)}
+            onError={() => {
+              const id = currentId();
+              if (id !== null) markArtFailed(id);
+              setArt(null);
+            }}
           />
           <div class="thumb-fallback" classList={{ hidden: !!art() }}>
             <Ico node={Music2} size={18} />

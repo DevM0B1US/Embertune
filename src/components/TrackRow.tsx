@@ -1,11 +1,12 @@
-import { invoke } from "@tauri-apps/api/core";
 import { createSignal, onCleanup, onMount } from "solid-js";
 import { Heart, Pencil, Play, Trash2 } from "lucide";
 import { Ico } from "../lib/icons";
 import { fmtDur } from "../lib/format";
-import { artCache, cacheArt, refreshLibrary, setTrackFavorite } from "../lib/state/library";
+import { resolveArt, peekArt, markArtFailed } from "../lib/art";
+import { refreshLibrary, setTrackFavorite } from "../lib/state/library";
 import { currentId, highlightPlaying, playTrack } from "../lib/state/player";
 import { confirmDialog, openMeta } from "../lib/state/ui";
+import { invoke } from "@tauri-apps/api/core";
 import type { Track } from "../lib/types";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -22,12 +23,14 @@ import type { Track } from "../lib/types";
 //      capped at 320ms. Rows of one cold batch mount in a single
 //      synchronous diff pass, so the anchor index is taken from the
 //      first row that mounts after markColdRender().
-//    · rows entering while scrolling: an 80ms pure-opacity fade with
-//      ZERO delay. A zero-delay fade physically cannot read as "late"
-//      — the row is fully opaque one frame after mount. No stagger, no
-//      counters, no velocity heuristics (a cumulative batch counter
-//      grows unbounded across a scroll session and was the cause of
-//      rows visibly lagging behind their neighbours mid-fling).
+//    · rows entering while scrolling: a SHORT batch-anchored
+//      micro-cascade — 14ms per row within the mount batch, hard-capped
+//      at 120ms. Every scroll batch re-anchors (rows mounting >60ms
+//      apart start a new batch), so delays can never accumulate across
+//      a session. Safety: rows mount ~BUFFER×rowH (≈560px) below the
+//      viewport, and even a violent 3000px/s fling needs ~190ms to
+//      reach them — the ≤120ms hold is always spent off-screen, yet
+//      the eye still sees rows appearing one by one.
 //    · prefers-reduced-motion: no animation at all.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -41,6 +44,13 @@ let coldPending = false;
 const COLD_WINDOW_MS = 400; // rows mounting this soon after a view change are cascade rows
 const CASCADE_STEP_MS = 22; // per-row cascade delay
 const CASCADE_CAP_MS = 320; // never stagger longer than this
+
+// scroll-in micro-cascade (batch-anchored — see header comment)
+let lastRowMountAt = -1e9;
+let scrollAnchorIdx = 0;
+const SCROLL_BATCH_GAP_MS = 60; // a quiet gap this long starts a new batch
+const SCROLL_STEP_MS = 14; // per-row delay inside a scroll batch
+const SCROLL_CAP_MS = 120; // hard cap — holds are always spent off-screen
 
 /** Called by TrackList when the visible id sequence changes (viewKey). */
 export function markColdRender(): void {
@@ -63,26 +73,35 @@ function animateCascade(el: HTMLElement, delay: number): void {
   );
 }
 
-function animateFadeIn(el: HTMLElement): void {
-  el.animate([{ opacity: "0" }, { opacity: "1" }], {
-    duration: 80,
-    easing: "linear",
-    fill: "backwards",
-  });
+function animateScrollIn(el: HTMLElement, delay: number): void {
+  el.animate(
+    [
+      { opacity: "0", transform: "translateY(4px)" },
+      { opacity: "1", transform: "translateY(0)" },
+    ],
+    {
+      duration: 170,
+      delay: Math.min(Math.max(0, delay), SCROLL_CAP_MS),
+      easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+      fill: "backwards",
+    }
+  );
 }
 
 // ── artwork: one shared IntersectionObserver, preloads 600px ahead ──
 //
-// Load scheduling matters for scroll smoothness: each get_art round
-// trip ends in a main-thread image decode, and a burst of those during
-// a scroll gesture reads as lag spikes (the virtualized list itself is
-// cheap — this was the remaining jank source on real libraries).
-// Therefore:
-//   · while the list is actively scrolling (notifyScrollActivity),
-//     entering rows' loads are queued, not started
-//   · ~150ms after the last scroll event the queue flushes in small
-//     chunks, spreading decodes over a few frames
-//   · cached art (artCache) is synchronous and unaffected
+// Art transport (real app): the `art://` custom URI protocol — the
+// webview fetches the JPEG itself (async, off the main thread, HTTP-
+// cached) instead of dragging a base64 string over IPC and decoding it
+// on the main thread. That IPC+decode burst was the lag-spike source
+// on real libraries; with the protocol it disappears entirely.
+// Scheduling policy (shared by both transports):
+//   · rows INSIDE the viewport load immediately, even mid-gesture —
+//     a blank cover flashing in after the fling is worse than a
+//     browser-scheduled load (which no longer touches the main thread)
+//   · rows in the 600px prefetch ring wait out the gesture; ~150ms
+//     after the last scroll event the queue flushes in small chunks
+//   · cached URLs (artCache) are synchronous and unaffected
 let artObserver: IntersectionObserver | null = null;
 const artLoaders = new Map<HTMLElement, () => void>();
 const artQueue = new Map<HTMLElement, () => void>();
@@ -133,8 +152,11 @@ function ensureObserver(root: HTMLElement): IntersectionObserver {
         const el = e.target as HTMLElement;
         const loader = artLoaders.get(el);
         if (!loader) continue;
-        if (performance.now() < scrollBusyUntil) artQueue.set(el, loader);
-        else loader();
+        // non-empty intersectionRect = actually inside the viewport
+        // (rootMargin extends isIntersecting to the prefetch ring too)
+        const inViewport = e.intersectionRect.width > 0 && e.intersectionRect.height > 0;
+        if (inViewport || performance.now() >= scrollBusyUntil) loader();
+        else artQueue.set(el, loader);
       }
     },
     { root, rootMargin: "600px 0px", threshold: 0 }
@@ -142,21 +164,10 @@ function ensureObserver(root: HTMLElement): IntersectionObserver {
   return artObserver;
 }
 
-async function loadArt(t: Track, setArt: (s: string) => void): Promise<void> {
-  const cached = artCache.get(t.id);
-  if (cached) {
-    setArt(cached);
-    return;
-  }
-  try {
-    const p = await invoke<string | null>("get_art", { trackId: t.id });
-    if (p) {
-      cacheArt(t.id, p);
-      setArt(p);
-    }
-  } catch {
-    /* no art */
-  }
+function loadRowArt(t: Track, setArt: (s: string | null) => void): void {
+  void resolveArt(t.id).then((url) => {
+    if (url) setArt(url);
+  });
 }
 
 async function deleteTrack(t: Track): Promise<void> {
@@ -177,29 +188,33 @@ export default function TrackRow(props: {
   const absIndex = () => props.start() + props.index();
 
   let li!: HTMLLIElement;
-  const [art, setArt] = createSignal<string | null>(artCache.get(t.id) ?? null);
+  const [art, setArt] = createSignal<string | null>(peekArt(t.id));
 
   onMount(() => {
-    // entrance animation — cold cascade (view change) vs instant fade
-    // (scroll-in). Delays are only ever assigned on cold renders; rows
-    // entering the window through scrolling appear immediately.
+    // entrance animation — cold cascade (view change) vs scroll-in
+    // micro-cascade. Scroll batches re-anchor on every quiet gap, so
+    // delays stay within [0, SCROLL_CAP_MS] forever.
     const trow = li.firstElementChild as HTMLElement | null;
     if (trow && !REDUCED_MOTION.matches) {
-      if (performance.now() - coldAt < COLD_WINDOW_MS) {
+      const now = performance.now();
+      if (now - coldAt < COLD_WINDOW_MS) {
         if (coldPending) {
           coldStartIdx = absIndex();
           coldPending = false;
         }
         animateCascade(trow, (absIndex() - coldStartIdx) * CASCADE_STEP_MS);
       } else {
-        animateFadeIn(trow);
+        if (now - lastRowMountAt > SCROLL_BATCH_GAP_MS) scrollAnchorIdx = absIndex();
+        lastRowMountAt = now;
+        animateScrollIn(trow, (absIndex() - scrollAnchorIdx) * SCROLL_STEP_MS);
       }
     }
 
-    // artwork — lazy via shared observer unless already cached; loads
-    // are deferred while scrolling (see notifyScrollActivity above)
+    // artwork — lazy via shared observer unless already cached. Rows
+    // inside the viewport load immediately (browser-scheduled fetch,
+    // off the main thread); the 600px prefetch ring waits out gestures.
     if (!art()) {
-      const loader = () => void loadArt(t, setArt);
+      const loader = () => loadRowArt(t, setArt);
       artLoaders.set(li, loader);
       ensureObserver(props.viewEl).observe(li);
       onCleanup(() => {
@@ -245,6 +260,7 @@ export default function TrackRow(props: {
           loading="lazy"
           decoding="async"
           onError={(e) => {
+            markArtFailed(t.id);
             setArt(null);
             (e.currentTarget as HTMLImageElement).removeAttribute("src");
           }}
