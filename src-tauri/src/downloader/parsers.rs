@@ -112,6 +112,51 @@ pub(crate) fn ytdlp_skipped(s: &str) -> bool {
     s.contains("has already been downloaded")
 }
 
+/// spotdl's playlist summary — `3/20 complete` — parsed as
+/// (songs done, playlist total). Pure helper; exercised by unit tests
+/// and available for wiring into the progress pipeline.
+#[allow(dead_code)]
+pub(crate) fn spotdl_complete(s: &str) -> Option<(usize, usize)> {
+    let idx = s.find("complete")?;
+    let token = s[..idx].trim_end().rsplit_whitespace().next()?;
+    let (done, total) = token.split_once('/')?;
+    if done.is_empty() || total.is_empty() {
+        return None;
+    }
+    if !done.bytes().all(|b| b.is_ascii_digit()) || !total.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some((done.parse().ok()?, total.parse().ok()?))
+}
+
+/// yt-dlp's playlist progress line — `[download] Downloading item 3 of 20`
+/// — parsed as (item, total). Pure helper; exercised by unit tests and
+/// available for wiring into the progress pipeline.
+#[allow(dead_code)]
+pub(crate) fn ytdlp_item(s: &str) -> Option<(usize, usize)> {
+    const TAG: &str = "Downloading item ";
+    let rest = s.split_once(TAG)?.1.trim_start();
+    let (item, after) = rest.split_once(' ')?;
+    let total = after.strip_prefix("of ")?.trim_start();
+    let total = total.split_whitespace().next().unwrap_or(total);
+    if item.is_empty() || total.is_empty() {
+        return None;
+    }
+    if !item.bytes().all(|b| b.is_ascii_digit()) || !total.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some((item.parse().ok()?, total.parse().ok()?))
+}
+
+/// Tally of skipped songs in accumulated spotdl output — lines matching
+/// [`spotdl_skipped`] count once each, even when a line hits several
+/// patterns. Pure helper; exercised by unit tests and available for
+/// wiring into the job summary.
+#[allow(dead_code)]
+pub(crate) fn spotdl_skipped_count(s: &str) -> usize {
+    s.lines().filter(|line| spotdl_skipped(line)).count()
+}
+
 
 #[cfg(test)]
 mod parser_tests {

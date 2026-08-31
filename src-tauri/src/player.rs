@@ -183,11 +183,15 @@ impl Player {
         let settings_thread = settings.clone();
         let connect_flag = Arc::new(AtomicBool::new(false));
         let fade_flag = connect_flag.clone();
+        // the connect thread gets its own handle — connect_flag itself is
+        // kept for Player.shutdown_flag (Arc is not Copy; moving it into
+        // the closure would leave nothing to store on the struct)
+        let connect_thread = connect_flag.clone();
 
         std::thread::spawn(move || {
             let mut attempt = 0u32;
             loop {
-                if connect_flag.load(Ordering::Relaxed) {
+                if connect_thread.load(Ordering::Relaxed) {
                     return;
                 }
                 match IpcConn::connect(&sock2) {
