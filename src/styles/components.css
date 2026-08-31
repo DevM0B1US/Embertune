@@ -378,14 +378,7 @@
 /* --- now-playing row: ember burns sideways from the play button --- */
 .track.playing .trow {
   overflow: hidden;
-  background: linear-gradient(
-    90deg,
-    rgba(255, 107, 53, 0.28) 0%,
-    rgba(255, 138, 70, 0.16) 18%,
-    rgba(255, 164, 102, 0.09) 42%,
-    rgba(255, 107, 53, 0.03) 68%,
-    rgba(255, 107, 53, 0) 88%
-  );
+  background: rgba(255, 107, 53, 0.14);
 }
 
 /* the ember — a soft static glow at the play button (animation removed:
@@ -398,15 +391,7 @@
   left: -50%;
   right: -50%;
   border-radius: inherit;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255, 107, 53, 0.1) 18%,
-    rgba(255, 154, 92, 0.2) 33%,
-    rgba(255, 209, 102, 0.22) 42%,
-    rgba(255, 154, 92, 0.14) 50%,
-    transparent 64%
-  );
+  background: rgba(255, 154, 92, 0.12);
   pointer-events: none;
 }
 

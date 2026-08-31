@@ -1,7 +1,6 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount } from "solid-js";
 import TrackRow from "./TrackRow";
 import { useRowFx } from "./rowfx";
-import { onScrollFrame } from "../lib/scrollsync";
 import { takeScrollReset, viewItems, viewKey } from "../lib/state/library";
 import { dlList } from "../lib/state/downloads";
 import { playTrack, togglePlay } from "../lib/state/player";
@@ -33,7 +32,7 @@ import type { Track } from "../lib/types";
 //    list's appearance is untouched until the user actually navigates.
 // ═══════════════════════════════════════════════════════════════════
 
-const BUFFER = 10; // extra rows rendered above/below the viewport
+const BUFFER = 16; // extra rows rendered above/below the viewport (raised from 10 to reduce mount/unmount churn during fast native scroll)
 const DEFAULT_ROW_H = 56; // mirrors --row-h; replaced by a real measure
 
 export default function TrackList(props: { viewEl: HTMLElement }) {
@@ -130,14 +129,6 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
     setMounted(true);
     setViewportH(view.clientHeight);
 
-    // ── scroll → window updates + art-load gating ───────────────────
-    // Synchronous, not rAF-queued: scroll events already fire once per
-    // frame in the rendering update's scroll steps — BEFORE rAF
-    // callbacks and paint — so updating here lands in the same frame.
-    // Queueing another rAF used to add a needless hop; and for
-    // smoothwheel-driven scrolling the same-frame path is provided by
-    // the onScrollFrame subscription below (scroll events for a
-    // scrollTop written inside rAF only fire the NEXT frame).
     let lastSyncTop = -1;
     let scrollIdleTimer: number | undefined;
     const sync = (): void => {
@@ -154,15 +145,22 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
         () => listEl.classList.remove("scrolling"),
         150
       );
+      // toggle backdrop-filter off during active scroll for cheaper paint
+      document.getElementById("app")?.classList.add("scroll-fast");
+      window.clearTimeout(scrollBackdropTimer);
+      scrollBackdropTimer = window.setTimeout(
+        () => document.getElementById("app")?.classList.remove("scroll-fast"),
+        200
+      );
       setScrollTop(st);
     };
+    let scrollBackdropTimer: number | undefined;
     const onScroll = (): void => sync();
-    const detachFrameSync = onScrollFrame(sync); // smoothwheel frames
     view.addEventListener("scroll", onScroll, { passive: true });
     onCleanup(() => {
-      detachFrameSync();
       view.removeEventListener("scroll", onScroll);
       window.clearTimeout(scrollIdleTimer);
+      window.clearTimeout(scrollBackdropTimer);
     });
 
     // ── viewport resizes (window, zoom, panel toggles) ─────────────

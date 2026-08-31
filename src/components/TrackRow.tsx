@@ -49,6 +49,7 @@ export default function TrackRow(props: {
 
   let li!: HTMLLIElement;
   const [art, setArt] = createSignal<string | null>(peekArt(t.id));
+  const [hovered, setHovered] = createSignal(false);
 
   onMount(() => {
     // artwork — lazy via shared observer unless already cached. Rows
@@ -78,6 +79,8 @@ export default function TrackRow(props: {
         selected: props.selected(),
       }}
       style={{ transform: `translate3d(0, ${absIndex() * props.rowH()}px, 0)` }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       onClick={(e) => {
         if (!(e.target as HTMLElement).closest(".row-actions")) playTrack(t.id);
       }}
@@ -130,28 +133,32 @@ export default function TrackRow(props: {
           >
             <Ico node={Heart} size={13} fill={t.favorite ? "currentColor" : "none"} />
           </button>
-          <button
-            class="edit-btn"
-            title="Edit"
-            aria-label="Edit"
-            onClick={(e) => {
-              e.stopPropagation();
-              openMeta(t);
-            }}
-          >
-            <Ico node={Pencil} size={13} />
-          </button>
-          <button
-            class="del-btn"
-            title="Delete"
-            aria-label="Delete"
-            onClick={(e) => {
-              e.stopPropagation();
-              void deleteTrack(t);
-            }}
-          >
-            <Ico node={Trash2} size={14} />
-          </button>
+          {hovered() && (
+            <>
+              <button
+                class="edit-btn"
+                title="Edit"
+                aria-label="Edit"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openMeta(t);
+                }}
+              >
+                <Ico node={Pencil} size={13} />
+              </button>
+              <button
+                class="del-btn"
+                title="Delete"
+                aria-label="Delete"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void deleteTrack(t);
+                }}
+              >
+                <Ico node={Trash2} size={14} />
+              </button>
+            </>
+          )}
         </div>
       </div>
     </li>

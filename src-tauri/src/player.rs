@@ -188,6 +188,7 @@ impl Player {
         // the closure would leave nothing to store on the struct)
         let connect_thread = connect_flag.clone();
 
+        let connect_flag_inner = connect_flag.clone();
         std::thread::spawn(move || {
             let mut attempt = 0u32;
             loop {

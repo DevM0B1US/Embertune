@@ -87,3 +87,14 @@ button {
   mix-blend-mode: overlay;
 }
 
+/* while the library list is actively scrolling, disable the expensive
+   backdrop-filter + noise overlay to keep paint cost down. The class
+   is toggled by TrackList's scroll sync (removed 200ms after idle). */
+#app.scroll-fast {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+#app.scroll-fast::after {
+  opacity: 0;
+}
+
