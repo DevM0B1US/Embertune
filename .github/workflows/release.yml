@@ -1,14 +1,20 @@
 # Automatic releases.
 #
-# Pushes to main are checked against the newest `v*` tag: if the version
-# in src-tauri/tauri.conf.json has no tag yet, the tag is created and
-# pushed — which triggers build.yml to compile every target and publish
-# the GitHub release with installers attached.
+# Every push to main is checked against the newest `v*` RELEASE: if the
+# version in src-tauri/tauri.conf.json has no published release yet, the
+# tag is created (when missing) and the reusable build compiles every
+# target and publishes the GitHub release with installers attached.
 #
 # So a release ship flow is exactly:
 #   1. bump "version" in src-tauri/tauri.conf.json (e.g. 0.1.0 → 0.2.0)
 #   2. commit + push to main
-#   → tag v0.2.0 is created here, build.yml builds and releases it
+#   → release.yml tags v0.2.0 and calls _build.yml, which publishes
+#
+# WHY the build is called directly instead of triggered by the tag push:
+# events created with the GITHUB_TOKEN (including tag pushes) do not
+# start other workflows. The check therefore looks at RELEASES, not just
+# tags — a tag without a release (e.g. left over from an older pipeline)
+# still gets its release built.
 #
 # Pushes that don't change the version are no-ops (job exits in ~5s).
 name: release
@@ -24,31 +30,60 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # push the release tag
+  contents: write # push the release tag, publish the release
 
 jobs:
-  tag:
-    name: Tag new version (triggers release build)
+  check:
+    name: Check version for unreleased build
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      new: ${{ steps.ver.outputs.new }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Create tag when tauri.conf.json version is unreleased
+      - id: ver
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
           TAG="v${VERSION}"
-          echo "tauri.conf.json version: ${VERSION} → tag ${TAG}"
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-          # ls-remote checks the remote (works on shallow checkouts)
-          if git ls-remote --exit-code --tags "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "::notice::Tag ${TAG} already exists — nothing to release"
+          # a release is the deliverable — the tag is only its pointer
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${TOKEN}" \
+            "${API}/releases/tags/${TAG}")
+          if [ "$STATUS" = "200" ]; then
+            echo "::notice::Release ${TAG} already published — skipping"
+            echo "new=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          git config user.name  "embertune-release-bot"
-          git config user.email "release@embertune.local"
-          git tag -a "${TAG}" -m "Embertune ${TAG}" "${GITHUB_SHA}"
-          git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}"
-          echo "::notice::Tag ${TAG} pushed — build.yml will publish the release"
+          # tag missing → create it at this exact commit (build.yml called
+          # below resolves v__VERSION__ against it)
+          if ! git ls-remote --exit-code --tags \
+                "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+                "refs/tags/${TAG}" >/dev/null 2>&1; then
+            git config user.name  "embertune-release-bot"
+            git config user.email "release@embertune.local"
+            git tag -a "${TAG}" -m "Embertune ${TAG}" "${GITHUB_SHA}"
+            git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}"
+            echo "::notice::Tag ${TAG} created"
+          else
+            echo "::notice::Tag ${TAG} exists without a release — building it"
+          fi
+          echo "new=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build & publish release
+    needs: check
+    if: needs.check.outputs.new == 'true'
+    # serialize per version: both matrix legs target the same release
+    concurrency:
+      group: release-${{ needs.check.outputs.version }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/_build.yml
+    with:
+      release: true
+    secrets: inherit
