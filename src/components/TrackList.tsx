@@ -32,7 +32,7 @@ import type { Track } from "../lib/types";
 //    list's appearance is untouched until the user actually navigates.
 // ═══════════════════════════════════════════════════════════════════
 
-const BUFFER = 16; // extra rows rendered above/below the viewport (raised from 10 to reduce mount/unmount churn during fast native scroll)
+const BUFFER = 28; // extra rows above/below viewport — large buffer to survive fast native scroll bursts
 const DEFAULT_ROW_H = 56; // mirrors --row-h; replaced by a real measure
 
 export default function TrackList(props: { viewEl: HTMLElement }) {
