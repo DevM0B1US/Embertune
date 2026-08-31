@@ -28,6 +28,19 @@ const IDLE_STATE: PlayerState = {
 const playerOwner = createRoot(() => {
   const [player, setPlayer] = createSignal<PlayerState>(IDLE_STATE);
 
+  // ── deduped derived accessors ─────────────────────────────────
+  // Memos propagate only when the value actually changed, so the
+  // whole UI can safely read these instead of the whole state object
+  // (which is replaced on every poll while playing).
+  const isPlaying = createMemo(() => player().playing);
+  const position = createMemo(() => player().position);
+  const duration = createMemo(() => player().duration);
+  const volume = createMemo(() => player().volume);
+  const shuffle = createMemo(() => player().shuffle);
+  const repeat = createMemo(() => player().repeat);
+  const speed = createMemo(() => player().speed);
+  const currentTrack = createMemo(() => player().current);
+
   // ── optimistic current-track highlight ────────────────────────────
   const [pendingId, setPendingId] = createSignal<number | null>(null);
 
@@ -198,7 +211,14 @@ const playerOwner = createRoot(() => {
 
   return {
     player,
-    setPlayer,
+    isPlaying,
+    position,
+    duration,
+    volume,
+    shuffle,
+    repeat,
+    speed,
+    currentTrack,
     currentId,
     highlightPlaying,
     startPlayerSync,
@@ -215,7 +235,14 @@ const playerOwner = createRoot(() => {
 });
 
 export const player = playerOwner.player;
-export const setPlayer = playerOwner.setPlayer;
+export const isPlaying = playerOwner.isPlaying;
+export const position = playerOwner.position;
+export const duration = playerOwner.duration;
+export const volume = playerOwner.volume;
+export const shuffle = playerOwner.shuffle;
+export const repeat = playerOwner.repeat;
+export const speed = playerOwner.speed;
+export const currentTrack = playerOwner.currentTrack;
 export const currentId = playerOwner.currentId;
 export const highlightPlaying = playerOwner.highlightPlaying;
 export const startPlayerSync = playerOwner.startPlayerSync;

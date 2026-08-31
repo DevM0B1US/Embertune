@@ -1,162 +1,130 @@
-import { invoke } from "@tauri-apps/api/core";
-import {
-  For,
-  createEffect,
-  createSignal,
-  on,
-  onCleanup,
-  onMount,
-} from "solid-js";
-import { Heart, Pencil, Play, Trash2 } from "lucide";
-import { Ico } from "../lib/icons";
-import { fmtDur } from "../lib/format";
-import {
-  artCache,
-  cacheArt,
-  viewItems,
-  viewKey,
-  takeScrollReset,
-  setTrackFavorite,
-  refreshLibrary,
-} from "../lib/state/library";
-import { currentId, highlightPlaying, playTrack } from "../lib/state/player";
-import { confirmDialog, openMeta } from "../lib/state/ui";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount } from "solid-js";
+import TrackRow, { markColdRender, notifyScrollVelocity } from "./TrackRow";
+import { takeScrollReset, viewItems, viewKey } from "../lib/state/library";
+import { dlList } from "../lib/state/downloads";
 import type { Track } from "../lib/types";
 
-// ── artwork lazy-load ─────────────────────────────────────────────
-let artObserver: IntersectionObserver | null = null;
-const artMap = new Map<HTMLElement, () => void>();
+// ═══════════════════════════════════════════════════════════════════
+//  TrackList — windowed virtualization for the library.
+//
+//  · Fixed row height (self-healed by measuring a real row) keeps the
+//    index math pixel-exact at any library size.
+//  · #track-list is position:relative with an explicit height; rows
+//    are absolutely positioned <li>s translated with translate3d().
+//  · The window memo slices the visible range (+BUFFER rows on each
+//    side) driven by an rAF-coalesced scroll signal; Solid's <For>
+//    diffs the slice by track identity — only rows entering/leaving
+//    the window are created or destroyed, middle rows are untouched.
+//  · Track objects are reference-stable across refreshes (the library
+//    store merges unchanged tracks), so scrolling, filtering and
+//    background refreshes never recreate rows wholesale — no flashing.
+//  · Entrance cascades replay only when the visible id sequence
+//    actually changes (viewKey), not on scroll or no-op refreshes.
+// ═══════════════════════════════════════════════════════════════════
 
-function getObserver(root: HTMLElement): IntersectionObserver {
-  if (artObserver) return artObserver;
-  artObserver = new IntersectionObserver(
-    (entries) => {
-      for (const e of entries) {
-        if (!e.isIntersecting) continue;
-        artObserver!.unobserve(e.target);
-        artMap.get(e.target as HTMLElement)?.();
-      }
-    },
-    { root, rootMargin: "400px 0px", threshold: 0 }
-  );
-  return artObserver;
-}
+const BUFFER = 10; // extra rows rendered above/below the viewport
+const DEFAULT_ROW_H = 56; // mirrors --row-h; replaced by a real measure
 
-async function loadArt(t: Track, set: (s: string) => void): Promise<void> {
-  const c = artCache.get(t.id);
-  if (c) { set(c); return; }
-  try {
-    const p = await invoke<string | null>("get_art", { trackId: t.id });
-    if (p) { cacheArt(t.id, p); set(p); }
-  } catch {}
-}
-
-// ── row actions ───────────────────────────────────────────────────
-async function deleteTrack(t: Track): Promise<void> {
-  if (!(await confirmDialog(`Delete "${t.title}" from the library and disk?`, "Delete"))) return;
-  await invoke("remove_track", { id: t.id });
-  await refreshLibrary();
-}
-
-// ── one row ───────────────────────────────────────────────────────
-function TrackRow(props: { t: Track; viewEl: HTMLElement }) {
-  const t = props.t;
-  let li!: HTMLLIElement;
-  const [art, setArt] = createSignal<string | null>(artCache.get(t.id) ?? null);
-
-  onMount(() => {
-    if (!art()) {
-      const loader = () => void loadArt(t, setArt);
-      artMap.set(li, loader);
-      getObserver(props.viewEl).observe(li);
-      onCleanup(() => { artMap.delete(li); artObserver?.unobserve(li); });
-    }
-  });
-
-  return (
-    <li
-      ref={li}
-      class="track"
-      data-id={t.id}
-      classList={{
-        playing: currentId() === t.id,
-        paused: currentId() === t.id && !highlightPlaying(),
-      }}
-      onClick={(e) => {
-        if (!(e.target as HTMLElement).closest(".row-actions")) playTrack(t.id);
-      }}
-    >
-      <div class="trow">
-        <button
-          class="play-btn"
-          title="Play"
-          aria-label="Play"
-          onClick={(e) => { e.stopPropagation(); playTrack(t.id); }}
-        >
-          <Ico node={Play} size={13} cls="row-play-icon" />
-        </button>
-        <img
-          class="track-art"
-          classList={{ hidden: !art() }}
-          src={art() ?? undefined}
-          alt=""
-          draggable={false}
-          loading="lazy"
-          onError={(e) => { setArt(null); (e.currentTarget as HTMLImageElement).removeAttribute("src"); }}
-        />
-        <div class="track-meta">
-          <div class="track-title" title={t.artist ? `${t.title} — ${t.artist}` : t.title}>
-            {t.title}
-          </div>
-          <div class="track-sub">
-            {t.artist || "—"} · {fmtDur(t.duration)}
-          </div>
-        </div>
-        <span class="track-src">{t.source}</span>
-        <div class="row-actions">
-          <button
-            class="heart-btn"
-            classList={{ fav: t.favorite }}
-            title="Favorite"
-            aria-label="Favorite"
-            onClick={(e) => { e.stopPropagation(); void setTrackFavorite(t); }}
-          >
-            <Ico node={Heart} size={13} fill={t.favorite ? "currentColor" : "none"} />
-          </button>
-          <button
-            class="edit-btn"
-            title="Edit"
-            aria-label="Edit"
-            onClick={(e) => { e.stopPropagation(); openMeta(t); }}
-          >
-            <Ico node={Pencil} size={13} />
-          </button>
-          <button
-            class="del-btn"
-            title="Delete"
-            aria-label="Delete"
-            onClick={(e) => { e.stopPropagation(); void deleteTrack(t); }}
-          >
-            <Ico node={Trash2} size={14} />
-          </button>
-        </div>
-      </div>
-    </li>
-  );
-}
-
-// ── the list ──────────────────────────────────────────────────────
 export default function TrackList(props: { viewEl: HTMLElement }) {
+  let listEl!: HTMLUListElement;
+
+  const [rowH, setRowH] = createSignal(DEFAULT_ROW_H);
+  const [scrollTop, setScrollTop] = createSignal(0);
+  const [viewportH, setViewportH] = createSignal(0);
+  const [mounted, setMounted] = createSignal(false);
+
+  let lastKey = "";
+
+  const win = createMemo(() => {
+    const items = viewItems();
+    const key = viewKey(); // dependency — marks the cascade below
+    if (!mounted()) return { start: 0, slice: [] as Track[] };
+    const rh = rowH();
+    const total = items.length;
+    const top = Math.max(0, scrollTop() - listEl.offsetTop);
+    const start = Math.max(0, Math.floor(top / rh) - BUFFER);
+    const end = Math.min(total, Math.ceil((top + viewportH()) / rh) + BUFFER);
+    // memos run before effects/render effects: the cascade marker is
+    // set before any newly created row mounts
+    if (key !== lastKey) {
+      lastKey = key;
+      markColdRender(start);
+    }
+    return { start, slice: items.slice(start, end) };
+  });
+
   onMount(() => {
-    createEffect(on(viewKey, () => {
-      if (takeScrollReset()) props.viewEl.scrollTop = 0;
-    }));
+    const view = props.viewEl;
+    setMounted(true);
+    setViewportH(view.clientHeight);
+
+    // ── scroll → rAF-coalesced window updates + velocity marker ────
+    let rafPending = false;
+    let prevTop = -1;
+    let prevAt = performance.now();
+    const onScroll = () => {
+      if (rafPending) return;
+      rafPending = true;
+      requestAnimationFrame(() => {
+        rafPending = false;
+        const st = view.scrollTop;
+        const now = performance.now();
+        const dt = now - prevAt;
+        const vel = prevTop >= 0 && dt > 0 ? Math.abs(st - prevTop) / dt : 0;
+        prevTop = st;
+        prevAt = now;
+        notifyScrollVelocity(vel);
+        setScrollTop(st);
+      });
+    };
+    view.addEventListener("scroll", onScroll, { passive: true });
+    onCleanup(() => view.removeEventListener("scroll", onScroll));
+
+    // ── viewport resizes (window, zoom, panel toggles) ─────────────
+    const ro = new ResizeObserver(() => setViewportH(view.clientHeight));
+    ro.observe(view);
+    onCleanup(() => ro.disconnect());
+
+    // downloads panel show/hide shifts the list's offsetTop — resync
+    createEffect(() => {
+      dlList().length;
+      setScrollTop(view.scrollTop);
+    });
+
+    // keep row height in sync with CSS (zoom / DPR changes)
+    const adoptRowHeight = (): void => {
+      const li = listEl.querySelector(".track") as HTMLElement | null;
+      const h = li?.getBoundingClientRect().height ?? 0;
+      if (h > 8 && Math.abs(h - rowH()) > 0.5) setRowH(h);
+    };
+
+    // visible-sequence change: reset to top when the change came from
+    // a filter interaction (never from a background refresh)
+    createEffect(
+      on(viewKey, () => {
+        if (takeScrollReset()) {
+          view.scrollTop = 0;
+          setScrollTop(0);
+        }
+        adoptRowHeight();
+      })
+    );
+
+    queueMicrotask(adoptRowHeight);
   });
 
   return (
-    <ul id="track-list">
-      <For each={viewItems()}>
-        {(t) => <TrackRow t={t} viewEl={props.viewEl} />}
+    <ul ref={listEl} id="track-list" style={{ height: `${viewItems().length * rowH()}px` }}>
+      <For each={win().slice}>
+        {(track, index) => (
+          <TrackRow
+            track={track}
+            index={index}
+            start={() => win().start}
+            rowH={rowH}
+            viewEl={props.viewEl}
+          />
+        )}
       </For>
     </ul>
   );

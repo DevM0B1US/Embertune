@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { createMemo, createRoot, createSignal } from "solid-js";
+import { batch, createMemo, createRoot, createSignal } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import type { Track } from "../types";
 
@@ -26,11 +26,33 @@ const libraryOwner = createRoot(() => {
 
   // One-shot flag consumed by the list on the next visible-sequence
   // change: filter interactions scroll back to top, background
-  // refreshes keep the reading position.
+  // refreshes keep the reading position. Filter actions below pair
+  // the flag with the signal write inside a batch — outside a Solid
+  // handler (e.g. a debounce timer) writes flush effects immediately,
+  // so the flag MUST change in the same batch as the filter.
   let scrollResetPending = false;
-  const requestScrollReset = (): void => {
-    scrollResetPending = true;
-  };
+
+  function applySearch(term: string): void {
+    batch(() => {
+      setSearchTerm(term);
+      scrollResetPending = true;
+    });
+  }
+
+  function applyFavFilter(on: boolean): void {
+    batch(() => {
+      setFavOnly(on);
+      scrollResetPending = true;
+    });
+  }
+
+  function applySort(key: SortKey): void {
+    batch(() => {
+      setSortBy(key);
+      scrollResetPending = true;
+    });
+  }
+
   const takeScrollReset = (): boolean => {
     const r = scrollResetPending;
     scrollResetPending = false;
@@ -153,12 +175,11 @@ const libraryOwner = createRoot(() => {
     tracks,
     setTracks,
     searchTerm,
-    setSearchTerm,
     favOnly,
-    setFavOnly,
     sortBy,
-    setSortBy,
-    requestScrollReset,
+    applySearch,
+    applyFavFilter,
+    applySort,
     takeScrollReset,
     viewItems,
     viewKey,
@@ -173,12 +194,11 @@ const libraryOwner = createRoot(() => {
 
 export const tracks = libraryOwner.tracks;
 export const searchTerm = libraryOwner.searchTerm;
-export const setSearchTerm = libraryOwner.setSearchTerm;
 export const favOnly = libraryOwner.favOnly;
-export const setFavOnly = libraryOwner.setFavOnly;
 export const sortBy = libraryOwner.sortBy;
-export const setSortBy = libraryOwner.setSortBy;
-export const requestScrollReset = libraryOwner.requestScrollReset;
+export const applySearch = libraryOwner.applySearch;
+export const applyFavFilter = libraryOwner.applyFavFilter;
+export const applySort = libraryOwner.applySort;
 export const takeScrollReset = libraryOwner.takeScrollReset;
 export const viewItems = libraryOwner.viewItems;
 export const viewKey = libraryOwner.viewKey;

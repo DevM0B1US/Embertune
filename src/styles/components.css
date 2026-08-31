@@ -292,10 +292,12 @@
 .view {
   position: relative;
   flex: 1;
-  overflow-y: scroll;
+  overflow-y: auto;
   padding: 0;
   -webkit-overflow-scrolling: touch;
-  scrollbar-gutter: stable;
+  /* virtualized list: the browser must not re-anchor scroll offsets
+     when window rows mount/unmount above the viewport */
+  overflow-anchor: none;
 }
 
 .hidden {
@@ -311,16 +313,22 @@
 }
 
 /* --- library --- */
-/* track list */
+/* track list — virtualized: explicit height + absolutely positioned
+   rows translated with translate3d; only window edge rows mount or
+   unmount while scrolling */
 #track-list {
   list-style: none;
   margin: 0;
   padding: 0;
   border-radius: 8px;
+  position: relative;
 }
 
-/* row */
+/* row — positioned by the list, never by document flow */
 #track-list .track {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   margin: 0;
 }
@@ -353,7 +361,7 @@
 #topbar .tbtn, #topbar .btn { pointer-events: auto !important; position: relative; z-index: 70; -webkit-app-region: no-drag; app-region: no-drag; }
 #btn-sleep { pointer-events: auto !important; }
 
-/* entrance animation is driven by WAAPI from library.ts (staggered
+/* entrance animation is driven by WAAPI from TrackRow (staggered
    "load one by one" cascade on cold render, quick micro-stagger while
    scrolling). Nothing needed here — reduced-motion is respected in JS. */
 

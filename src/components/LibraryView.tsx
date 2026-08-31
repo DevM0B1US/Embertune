@@ -4,16 +4,15 @@ import TrackList from "./TrackList";
 import DownloadsPanel from "./DownloadsPanel";
 import { Ico } from "../lib/icons";
 import {
+  applyFavFilter,
+  applySearch,
+  applySort,
   favOnly,
   libTitle,
   searchTerm,
-  setSearchTerm,
-  setFavOnly,
-  setSortBy,
   sortBy,
   totalCount,
   viewItems,
-  requestScrollReset,
   type SortKey,
 } from "../lib/state/library";
 import { dlList } from "../lib/state/downloads";
@@ -37,16 +36,14 @@ export default function LibraryView() {
     searchDebounce = window.setTimeout(() => {
       const next = searchInp.value.trim();
       if (next === searchTerm()) return;
-      setSearchTerm(next);
-      requestScrollReset();
+      applySearch(next);
     }, 120);
   };
 
   const cycleSort = () => {
     const idx = SORTS.findIndex(([k]) => k === sortBy());
     const next = SORTS[(idx + 1) % SORTS.length]!;
-    setSortBy(next[0]);
-    requestScrollReset();
+    applySort(next[0]);
   };
 
   const sortLabel = () => SORTS.find(([k]) => k === sortBy())?.[1] || "Newest";
@@ -81,10 +78,7 @@ export default function LibraryView() {
             title="Favorites only"
             aria-label="Favorites only"
             classList={{ active: favOnly() }}
-            onClick={() => {
-              setFavOnly(!favOnly());
-              requestScrollReset();
-            }}
+            onClick={() => applyFavFilter(!favOnly())}
           >
             <Ico node={Heart} size={15} />
           </button>
