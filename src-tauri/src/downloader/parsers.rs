@@ -118,7 +118,9 @@ pub(crate) fn ytdlp_skipped(s: &str) -> bool {
 #[allow(dead_code)]
 pub(crate) fn spotdl_complete(s: &str) -> Option<(usize, usize)> {
     let idx = s.find("complete")?;
-    let token = s[..idx].trim_end().rsplit_whitespace().next()?;
+    // NB: str has no rsplit_whitespace on stable — split_whitespace()
+    // + last() gives the trailing token
+    let token = s[..idx].trim_end().split_whitespace().last()?;
     let (done, total) = token.split_once('/')?;
     if done.is_empty() || total.is_empty() {
         return None;
