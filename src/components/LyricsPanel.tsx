@@ -13,6 +13,7 @@ export default function LyricsPanel() {
   const [lrcLines, setLrcLines] = createSignal<LrcLine[]>([]);
   const [plainText, setPlainText] = createSignal<string | null>(null);
   const [activeIdx, setActiveIdx] = createSignal(-1);
+  const [loaded, setLoaded] = createSignal(false);
 
   // row elements captured via refs — no per-line DOM queries
   let lineEls: HTMLElement[] = [];
@@ -96,11 +97,13 @@ export default function LyricsPanel() {
       setActiveIdx(-1);
       setLrcLines([]);
       setPlainText("No track playing.");
+      setLoaded(true);
       return;
     }
     setPlainText(null);
     setLrcLines([]);
     setActiveIdx(-1);
+    setLoaded(false);
     try {
       const raw = await invoke<string | null>("get_lyrics", {
         trackId: t.id,
@@ -111,6 +114,7 @@ export default function LyricsPanel() {
       if (req !== lrcReq) return;
       if (!raw) {
         setPlainText("No lyrics found for this track.");
+        setLoaded(true);
         return;
       }
       const parsed = parseLrc(raw);
@@ -119,15 +123,18 @@ export default function LyricsPanel() {
         setLrcLines(parsed.lines);
         setPlainText(null);
         setActiveIdx(-1);
+        setLoaded(true);
         queueMicrotask(updateLyrics);
       } else {
         setLrcLines([]);
         setActiveIdx(-1);
         setPlainText(parsed.plain ?? "No lyrics found for this track.");
+        setLoaded(true);
       }
     } catch {
       if (req !== lrcReq) return;
       setPlainText("No lyrics found for this track.");
+      setLoaded(true);
     }
   }
 
@@ -205,7 +212,7 @@ export default function LyricsPanel() {
           </button>
         </div>
       </div>
-      <div class="drawer-body">
+      <div class="drawer-body" style={{ opacity: loaded() ? 1 : 0, transition: "opacity 0.2s ease" }}>
         <div ref={box} id="lyrics-text" class="lyrics-text" onScroll={onBoxScroll}>
           <For each={lrcLines()}>
             {(l, i) => (
@@ -219,8 +226,8 @@ export default function LyricsPanel() {
               </div>
             )}
           </For>
-          {lrcLines().length === 0
-            ? (plainText() ?? "Loading…")
+          {lrcLines().length === 0 && plainText()
+            ? plainText()
             : ""}
         </div>
       </div>
