@@ -17,25 +17,11 @@ import { useRowFx } from "./rowfx";
 //  shifts so a row keeps its pixel position (middle rows' absolute
 //  index never changes on scroll — their transform writes are no-ops).
 //
-//  Entrance animation: WAAPI on the inner .trow (never on the
-//  positioned wrapper). Two flavors, split by WHEN the row mounts:
-//    · cold render (view / search / sort / refresh change): the
-//      "one-by-one" cascade — 22ms per row from the window's first row,
-//      capped at 320ms. Rows of one cold batch mount in a single
-//      synchronous diff pass, so the anchor index is taken from the
-//      first row that mounts after markColdRender().
-//    · rows entering while scrolling: a CONTINUOUS per-gesture ripple —
-//      each mounted row steps a shared delay forward (16ms), hard-capped
-//      at 120ms; a quiet gap >350ms (the gesture ended) resets it. The
-//      cap makes runaway accumulation impossible (the v1 bug), and the
-//      carry-through means mid-gesture lulls no longer produce delay-0
-//      rows that pop in instantly against a rippling background (v3
-//      batch resets did exactly that — user-visible as random "instant"
-//      rows among cascading ones). Mount order = slice order, so the
-//      ripple always reads top-to-bottom.
-//    · prefers-reduced-motion: no animation at all.
+//  Deliberately NO entrance animation: rows mount already visible —
+//  the list is bare and instant by design (user request). Artwork is
+//  lazy via the shared observer, with rows inside the viewport loading
+//  immediately (fetch is browser-scheduled, off the main thread).
 //
-//  The cascade/ripple/art-observer state lives in the RowFx instance
 //  provided by LibraryView (context) — NOT in module scope (audit Q2:
 //  one list per app was a fragile, undocumented assumption; audit B4:
 //  a module-cached observer kept a stale detached root alive after
@@ -65,13 +51,6 @@ export default function TrackRow(props: {
   const [art, setArt] = createSignal<string | null>(peekArt(t.id));
 
   onMount(() => {
-    // entrance animation — cold cascade (view change) vs scroll-in
-    // ripple. The ripple carries across mid-gesture lulls and only
-    // resets when scrolling has truly stopped, so rows never pop in
-    // at delay 0 among cascading neighbours.
-    const trow = li.firstElementChild as HTMLElement | null;
-    if (trow) fx.runEntrance(trow, absIndex());
-
     // artwork — lazy via shared observer unless already cached. Rows
     // inside the viewport load immediately (browser-scheduled fetch,
     // off the main thread); the 600px prefetch ring waits out gestures.

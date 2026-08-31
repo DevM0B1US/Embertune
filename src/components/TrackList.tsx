@@ -20,9 +20,9 @@ import type { Track } from "../lib/types";
 //  · Track objects are reference-stable across refreshes (the library
 //    store merges unchanged tracks), so scrolling, filtering and
 //    background refreshes never recreate rows wholesale — no flashing.
-//  · Entrance cascades replay only when the visible id sequence
-//    actually changes (viewKey); rows mounted by scrolling run a
-//    continuous per-gesture ripple (≤120ms cap, see TrackRow/rowfx).
+//  · Deliberately NO entrance animations: rows mount already visible.
+//    The list is bare and instant by design (user request) — the old
+//    cold-render cascade marker in the window memo is gone with it.
 //  · Keyboard navigation (audit U1) + ARIA listbox semantics (audit
 //    U2): the list is focusable, ↑/↓/PgUp/PgDn/Home/End move a
 //    selection that is kept centered, Enter/Space play it. The
@@ -44,31 +44,18 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
   // keyboard-selected track id (null = nothing selected yet)
   const [selId, setSelId] = createSignal<number | null>(null);
 
-  let lastKey = "";
-
-  // ⚠ DELIBERATE SIDE EFFECT IN A MEMO (audit B15) — read before touching:
-  // `win` is the one place that knows a new window diff is about to hit the
-  // DOM. Memos run synchronously during propagation, BEFORE render effects
-  // and before <For> mounts the new rows — which is exactly when the cold
-  // cascade marker must be set so the first freshly-mounted row anchors the
-  // stagger. Moving markColdRender() into an effect (createEffect / Render
-  // effect) would run AFTER the rows mount and the anchor would be one row
-  // late (or the whole cascade would read as stale). If you ever need this
-  // memo to be pure, the marker must move into the row-mount path itself,
-  // not into another effect.
+  // Window memo — pure w.r.t. the list: reads viewItems + scroll
+  // state, slices the visible range. (It used to also stamp a
+  // cold-cascade marker for the entrance animation; that machinery is
+  // removed — rows mount visible.)
   const win = createMemo(() => {
     const items = viewItems();
-    const key = viewKey(); // dependency — marks the cascade above
     if (!mounted()) return { start: 0, slice: [] as Track[] };
     const rh = rowH();
     const total = items.length;
     const top = Math.max(0, scrollTop() - listEl.offsetTop);
     const start = Math.max(0, Math.floor(top / rh) - BUFFER);
     const end = Math.min(total, Math.ceil((top + viewportH()) / rh) + BUFFER);
-    if (key !== lastKey) {
-      lastKey = key;
-      fx.markColdRender();
-    }
     return { start, slice: items.slice(start, end) };
   });
 
