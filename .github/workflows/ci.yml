@@ -29,6 +29,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      # Tauri's Linux stack links GTK3 + WebKit2GTK through pkg-config;
+      # without these system headers gdk-sys's build script fails in
+      # ~44s with "Package gdk-3.0 was not found" (same list build.yml
+      # installs before tauri build)
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
       # the sandbox this code was authored in has no cargo — CI is the
       # first compile gate for backend changes
       - name: cargo check
