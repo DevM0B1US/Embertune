@@ -82,7 +82,8 @@ export default function LyricsPanel() {
     }
   }
 
-  async function loadLyrics(): Promise<void> {
+  async function loadLyrics(retryDelay = 0): Promise<void> {
+    if (retryDelay > 0) await new Promise((r) => setTimeout(r, retryDelay));
     const t = player().current;
     // guard against out-of-order async resolution when tracks change fast:
     // only the latest request is allowed to write
@@ -118,6 +119,7 @@ export default function LyricsPanel() {
         setLrcLines(parsed.lines);
         setPlainText(null);
         setActiveIdx(-1);
+        queueMicrotask(updateLyrics);
       } else {
         setLrcLines([]);
         setActiveIdx(-1);
@@ -133,7 +135,14 @@ export default function LyricsPanel() {
   // synchronously — untrack it, or the whole player object becomes a
   // dependency and lyrics reload (clearing + refetching) on every poll.
   createEffect(() => {
-    if (lyricsOpen()) void untrack(loadLyrics);
+    if (lyricsOpen()) {
+      if (player().current) {
+        void untrack(loadLyrics);
+      } else {
+        // track not polled yet — retry after a short delay
+        void untrack(() => loadLyrics(300));
+      }
+    }
   });
   // reload when the track changes while open.
   // currentId is a DEDUPED memo — on() alone would refire on every poll
