@@ -1,4 +1,4 @@
-import { finishPrompt, prompt, promptEls } from "../lib/state";
+import { finishPrompt, prompt, promptRefs } from "../lib/state/ui";
 import { Ico } from "../lib/icons";
 import { X } from "lucide";
 
@@ -26,7 +26,7 @@ export default function PromptDialog() {
             {prompt().msg}
           </p>
           <input
-            ref={(e) => (promptEls.input = e)}
+            ref={(e) => (promptRefs.input = e)}
             id="prompt-input"
             type="text"
             spellcheck={false}
@@ -34,7 +34,7 @@ export default function PromptDialog() {
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                promptEls.ok?.click();
+                promptRefs.ok?.click();
               } else if (e.key === "Escape") {
                 finishPrompt(null);
               }
@@ -45,7 +45,7 @@ export default function PromptDialog() {
               Cancel
             </button>
             <button
-              ref={(e) => (promptEls.ok = e)}
+              ref={(e) => (promptRefs.ok = e)}
               id="prompt-ok"
               class="btn primary"
               onClick={() => {
@@ -55,7 +55,7 @@ export default function PromptDialog() {
                   finishPrompt("ok");
                   return;
                 }
-                const input = promptEls.input;
+                const input = promptRefs.input;
                 const v = input ? input.value.trim() : "";
                 finishPrompt(v.length ? v : null);
               }}

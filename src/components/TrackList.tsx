@@ -13,18 +13,14 @@ import { fmtDur } from "../lib/format";
 import {
   artCache,
   cacheArt,
-  confirmDialog,
-  consumeReset,
-  dlList,
-  favOnly,
-  invalidateView,
-  openMeta,
-  playHi,
-  playTrack,
-  refreshLibrary,
-  viewGen,
   viewItems,
-} from "../lib/state";
+  viewKey,
+  takeScrollReset,
+  setTrackFavorite,
+  refreshLibrary,
+} from "../lib/state/library";
+import { currentId, highlightPlaying, playTrack } from "../lib/state/player";
+import { confirmDialog, openMeta } from "../lib/state/ui";
 import type { Track } from "../lib/types";
 
 // ── artwork lazy-load ─────────────────────────────────────────────
@@ -56,15 +52,6 @@ async function loadArt(t: Track, set: (s: string) => void): Promise<void> {
 }
 
 // ── row actions ───────────────────────────────────────────────────
-async function toggleFav(t: Track, set: (v: boolean) => void): Promise<void> {
-  const was = t.favorite;
-  t.favorite = !was;
-  set(!was);
-  try { await invoke("set_favorite", { id: t.id, favorite: t.favorite }); }
-  catch { t.favorite = was; set(was); return; }
-  if (favOnly()) invalidateView(false);
-}
-
 async function deleteTrack(t: Track): Promise<void> {
   if (!(await confirmDialog(`Delete "${t.title}" from the library and disk?`, "Delete"))) return;
   await invoke("remove_track", { id: t.id });
@@ -75,7 +62,6 @@ async function deleteTrack(t: Track): Promise<void> {
 function TrackRow(props: { t: Track; viewEl: HTMLElement }) {
   const t = props.t;
   let li!: HTMLLIElement;
-  const [fav, setFav] = createSignal(t.favorite);
   const [art, setArt] = createSignal<string | null>(artCache.get(t.id) ?? null);
 
   onMount(() => {
@@ -93,8 +79,8 @@ function TrackRow(props: { t: Track; viewEl: HTMLElement }) {
       class="track"
       data-id={t.id}
       classList={{
-        playing: playHi().id === t.id,
-        paused: playHi().id === t.id && !playHi().playing,
+        playing: currentId() === t.id,
+        paused: currentId() === t.id && !highlightPlaying(),
       }}
       onClick={(e) => {
         if (!(e.target as HTMLElement).closest(".row-actions")) playTrack(t.id);
@@ -130,12 +116,12 @@ function TrackRow(props: { t: Track; viewEl: HTMLElement }) {
         <div class="row-actions">
           <button
             class="heart-btn"
-            classList={{ fav: fav() }}
+            classList={{ fav: t.favorite }}
             title="Favorite"
             aria-label="Favorite"
-            onClick={(e) => { e.stopPropagation(); void toggleFav(t, setFav); }}
+            onClick={(e) => { e.stopPropagation(); void setTrackFavorite(t); }}
           >
-            <Ico node={Heart} size={13} fill={fav() ? "currentColor" : "none"} />
+            <Ico node={Heart} size={13} fill={t.favorite ? "currentColor" : "none"} />
           </button>
           <button
             class="edit-btn"
@@ -162,8 +148,8 @@ function TrackRow(props: { t: Track; viewEl: HTMLElement }) {
 // ── the list ──────────────────────────────────────────────────────
 export default function TrackList(props: { viewEl: HTMLElement }) {
   onMount(() => {
-    createEffect(on(viewGen, () => {
-      if (consumeReset()) props.viewEl.scrollTop = 0;
+    createEffect(on(viewKey, () => {
+      if (takeScrollReset()) props.viewEl.scrollTop = 0;
     }));
   });
 

@@ -1,34 +1,13 @@
 import { For } from "solid-js";
-import { dlList, dlRate } from "../lib/state";
+import { dlList } from "../lib/state/downloads";
 import { dlPercent, dlStatusText, fmtBytes, fmtSpeed } from "../lib/format";
 import type { JobView } from "../lib/types";
-
-function speedFor(id: number, downloaded: number, status: string): string {
-  if (status !== "downloading" || downloaded <= 0) return "";
-  if (dlRate.size > 40) {
-    const now2 = performance.now();
-    for (const [k, v] of dlRate) if (now2 - v.t > 60000) dlRate.delete(k);
-  }
-  const now = performance.now();
-  const prev = dlRate.get(id);
-  let rate: number;
-  if (prev && now > prev.t) {
-    const dt = (now - prev.t) / 1000;
-    const inst = dt > 0 ? (downloaded - prev.bytes) / dt : 0;
-    rate = prev.rate > 0 ? prev.rate * 0.7 + inst * 0.3 : inst;
-  } else {
-    rate = 0;
-  }
-  dlRate.set(id, { t: now, bytes: downloaded, rate });
-  return rate > 0 ? fmtSpeed(rate) : "";
-}
 
 function subText(j: JobView): string {
   if (j.skipped) return "Skipped — already in library";
   const isUrl = /^https?:\/\//.test(j.title);
   const bits: string[] = [dlStatusText(j)];
-  const sp = j.status === "downloading" ? speedFor(j.id, j.downloaded, j.status) : "";
-  if (sp) bits.push(sp);
+  if (j.status === "downloading" && (j.rate ?? 0) > 0) bits.push(fmtSpeed(j.rate!));
   if (j.downloaded > 0) bits.push(fmtBytes(j.downloaded));
   if (j.percent >= 0) bits.push(dlPercent(j));
   if (isUrl && j.status === "queued") bits.push("· pending");

@@ -11,7 +11,9 @@ import {
 } from "lucide";
 import { Ico } from "../lib/icons";
 import { fmtDur } from "../lib/format";
-import { artCache, cacheArt, currentId, player, setPlayer, toast } from "../lib/state";
+import { artCache, cacheArt } from "../lib/state/library";
+import { currentId, player, setPlayer } from "../lib/state/player";
+import { toast } from "../lib/state/ui";
 import type { SeekTarget } from "../lib/types";
 
 const REPEAT_NEXT: Record<string, string> = { off: "all", all: "one", one: "off" };

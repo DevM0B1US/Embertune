@@ -22,6 +22,8 @@ export interface JobView {
   total: number;
   error: string | null;
   skipped: boolean;
+  /** smoothed download rate (bytes/s), folded in by the downloads store */
+  rate?: number;
 }
 
 export interface PlayerState {

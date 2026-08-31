@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createEffect, createSignal, For, Show } from "solid-js";
-import { closeMeta, metaOpen, metaTrack, refreshLibrary } from "../lib/state";
+import { closeMeta, metaOpen, metaTrack } from "../lib/state/ui";
+import { refreshLibrary } from "../lib/state/library";
 import { sndDone } from "../lib/sounds";
 import { fmtDur } from "../lib/format";
 import type { TrackMetaInfo } from "../lib/types";

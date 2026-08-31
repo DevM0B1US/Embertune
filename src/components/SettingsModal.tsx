@@ -3,14 +3,9 @@ import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { createEffect, createSignal, For } from "solid-js";
 import {
   closeSettings,
-  setDlDir,
-  setEngineLog,
-  setSettings,
-  settings,
   settingsOpen,
-  dlDir,
-  engineLog,
-} from "../lib/state";
+} from "../lib/state/ui";
+import { dlDir, setDlDir, engineLog, setEngineLog, applyTheme, setSettings, settings } from "../lib/state/settings";
 import { Ico } from "../lib/icons";
 import { Download, Music2, Palette, RefreshCw, Wrench, X } from "lucide";
 
@@ -30,12 +25,6 @@ export default function SettingsModal() {
   createEffect(() => {
     spotSecret.placeholder = settings().has_spotify_creds ? "••••••••" : "";
   });
-
-  const applyTheme = (t: string): void => {
-    document.documentElement.dataset.theme = t;
-    void invoke("set_theme", { theme: t });
-    setSettings((s) => ({ ...s, theme: t }));
-  };
 
   const applyQuality = (v: string): void => {
     void invoke("set_download_quality", { quality: v });

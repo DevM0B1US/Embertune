@@ -3,16 +3,21 @@ import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { createEffect, createSignal, For, onCleanup } from "solid-js";
 import {
   lyricsOpen,
-  setLyricsOpen,
-  settings,
   settingsOpen,
   setSettingsOpen,
   toast,
-  queueUrl,
-  refreshLibrary,
-} from "../lib/state";
-import { sndOpen, sndClose } from "../lib/sounds";
-import { setSleepTimer, updateSleepRing, stopSleepRing } from "../lib/sleep";
+  toggleLyrics,
+} from "../lib/state/ui";
+import { settings } from "../lib/state/settings";
+import { queueUrl } from "../lib/state/downloads";
+import { refreshLibrary } from "../lib/state/library";
+import {
+  fmtSleepRemaining,
+  setSleepTimer,
+  sleepRemainingMs,
+  sleepTotalMin,
+  tickRemaining,
+} from "../lib/sleep";
 import { Ico } from "../lib/icons";
 import { Mic, Minus, Maximize, Settings, Timer, X } from "lucide";
 
@@ -32,6 +37,7 @@ const SLEEP_OPTIONS: Array<{ min: number; label: string }> = [
 
 export default function Topbar() {
   let urlInput!: HTMLTextAreaElement;
+  let customInput!: HTMLInputElement;
 
   // ── sleep popover ─────────────────────────────────────────────────
   let sleepPop!: HTMLDivElement;
@@ -75,32 +81,42 @@ export default function Topbar() {
   const docClick = (e: MouseEvent): void => {
     if (!sleepOpen()) return;
     const t = e.target as HTMLElement;
-    if (!sleepPop.contains(t) && !btnSleep.contains(t)) {
-      setSleepOpen(false);
-      stopSleepRing();
-    }
+    if (!sleepPop.contains(t) && !btnSleep.contains(t)) setSleepOpen(false);
   };
   document.addEventListener("click", docClick);
   onCleanup(() => document.removeEventListener("click", docClick));
 
-  // countdown ring runs only while the popover is open
-  createEffect(() => {
-    if (sleepOpen()) {
-      updateSleepRing();
-    } else {
-      stopSleepRing();
-    }
-  });
+  // countdown ticks only while the popover is open
   createEffect(() => {
     if (!sleepOpen()) return;
     let raf = 0;
     const loop = () => {
-      updateSleepRing();
+      tickRemaining();
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     onCleanup(() => cancelAnimationFrame(raf));
   });
+
+  const sleepCountdown = () => {
+    const ms = sleepRemainingMs();
+    return ms !== null ? fmtSleepRemaining(ms) : "—";
+  };
+  const sleepPercent = () => {
+    const total = sleepTotalMin();
+    const ms = sleepRemainingMs();
+    if (!total || ms === null) return 0;
+    return Math.max(0, Math.min(100, (ms / (total * 60000)) * 100));
+  };
+
+  const submitCustomMinutes = (): void => {
+    const v = parseInt(customInput.value, 10);
+    if (!v || v < 1 || v > 480) {
+      toast("Enter 1–480 minutes");
+      return;
+    }
+    setSleepTimer(v);
+  };
 
   return (
     <header id="topbar" data-tauri-drag-region="">
@@ -133,12 +149,7 @@ export default function Topbar() {
         aria-label="Lyrics"
         data-tauri-drag-region="false"
         classList={{ active: lyricsOpen() }}
-        onClick={() => {
-          const open = !lyricsOpen();
-          setLyricsOpen(open);
-          if (open) sndOpen();
-          else sndClose();
-        }}
+        onClick={toggleLyrics}
       >
         <Ico node={Mic} size={16} />
       </button>
@@ -192,7 +203,6 @@ export default function Topbar() {
             onClick={(e) => {
               e.stopPropagation();
               setSleepOpen(false);
-              stopSleepRing();
             }}
           >
             <Ico node={X} size={14} />
@@ -200,11 +210,11 @@ export default function Topbar() {
         </div>
         <div class="sleep-count">
           <div class="sleep-time-row">
-            <span id="sleep-time">—</span>
+            <span id="sleep-time">{sleepCountdown()}</span>
             <span class="sleep-remaining">remaining</span>
           </div>
           <div class="sleep-bar">
-            <div id="sleep-bar-fill" />
+            <div id="sleep-bar-fill" style={{ width: `${sleepPercent()}%` }} />
           </div>
         </div>
         <div id="sleep-pills-pop" class="sleep-options">
@@ -212,7 +222,7 @@ export default function Topbar() {
             {(opt) => (
               <button
                 class="sleep-opt"
-                data-min={String(opt.min)}
+                classList={{ active: (sleepTotalMin() ?? 0) === opt.min }}
                 onClick={() => setSleepTimer(opt.min)}
               >
                 <span>{opt.label}</span>
@@ -221,20 +231,17 @@ export default function Topbar() {
           </For>
         </div>
         <div class="sleep-custom">
-          <input id="sleep-custom-input" type="number" min="1" max="480" placeholder="Custom minutes" />
-          <button
-            id="sleep-custom-set"
-            class="btn"
-            onClick={() => {
-              const inp = document.getElementById("sleep-custom-input") as HTMLInputElement;
-              const v = parseInt(inp.value, 10);
-              if (!v || v < 1 || v > 480) {
-                toast("Enter 1–480 minutes");
-                return;
-              }
-              setSleepTimer(v);
+          <input
+            ref={customInput}
+            type="number"
+            min="1"
+            max="480"
+            placeholder="Custom minutes"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitCustomMinutes();
             }}
-          >
+          />
+          <button id="sleep-custom-set" class="btn" onClick={submitCustomMinutes}>
             Set
           </button>
         </div>

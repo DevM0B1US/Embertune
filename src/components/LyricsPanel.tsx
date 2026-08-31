@@ -2,14 +2,8 @@ import { createEffect, createSignal, For, on, onCleanup, untrack } from "solid-j
 import { invoke } from "@tauri-apps/api/core";
 import { Maximize, Minimize, X } from "lucide";
 import { Ico } from "../lib/icons";
-import {
-  currentId,
-  lyricsFs,
-  lyricsOpen,
-  player,
-  setLyricsFs,
-  setLyricsOpen,
-} from "../lib/state";
+import { currentId, player } from "../lib/state/player";
+import { lyricsFs, lyricsOpen, setLyricsFs, setLyricsOpen } from "../lib/state/ui";
 
 // ── lyrics parsing ──────────────────────────────────────────────────
 interface LrcLine {

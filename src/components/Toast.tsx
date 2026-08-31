@@ -1,20 +1,15 @@
-import { toastEls, toastSt } from "../lib/state";
+import { toastRefs, toastState } from "../lib/state/ui";
 
 export default function Toast() {
-  let el!: HTMLDivElement;
-  toastEls.el = el; // set on mount below
   return (
     <div
-      ref={(e) => {
-        el = e;
-        toastEls.el = e;
-      }}
+      ref={(el) => (toastRefs.el = el)}
       id="toast"
       class="toast"
-      classList={{ hidden: toastSt().hidden, leaving: toastSt().leaving }}
+      classList={{ hidden: toastState().hidden, leaving: toastState().leaving }}
       aria-live="polite"
     >
-      {toastSt().text}
+      {toastState().text}
     </div>
   );
 }

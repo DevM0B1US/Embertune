@@ -4,20 +4,22 @@ import TrackList from "./TrackList";
 import DownloadsPanel from "./DownloadsPanel";
 import { Ico } from "../lib/icons";
 import {
-  dlList,
   favOnly,
-  invalidateView,
   libTitle,
   searchTerm,
-  setFavOnly,
   setSearchTerm,
+  setFavOnly,
   setSortBy,
   sortBy,
   totalCount,
   viewItems,
-} from "../lib/state";
+  requestScrollReset,
+  type SortKey,
+} from "../lib/state/library";
+import { dlList } from "../lib/state/downloads";
+import { registerSearchInput } from "../lib/state/ui";
 
-const SORTS: Array<[string, string]> = [
+const SORTS: Array<[SortKey, string]> = [
   ["newest", "Newest"],
   ["title", "A–Z"],
   ["artist", "Artist"],
@@ -36,7 +38,7 @@ export default function LibraryView() {
       const next = searchInp.value.trim();
       if (next === searchTerm()) return;
       setSearchTerm(next);
-      invalidateView(true);
+      requestScrollReset();
     }, 120);
   };
 
@@ -44,7 +46,7 @@ export default function LibraryView() {
     const idx = SORTS.findIndex(([k]) => k === sortBy());
     const next = SORTS[(idx + 1) % SORTS.length]!;
     setSortBy(next[0]);
-    invalidateView(true);
+    requestScrollReset();
   };
 
   const sortLabel = () => SORTS.find(([k]) => k === sortBy())?.[1] || "Newest";
@@ -55,7 +57,10 @@ export default function LibraryView() {
         <span class="lib-bar-title">{libTitle()}</span>
         <div class="lib-bar-controls">
           <input
-            ref={searchInp}
+            ref={(el) => {
+              searchInp = el;
+              registerSearchInput(el);
+            }}
             id="search"
             class="lib-bar-search"
             type="text"
@@ -78,7 +83,7 @@ export default function LibraryView() {
             classList={{ active: favOnly() }}
             onClick={() => {
               setFavOnly(!favOnly());
-              invalidateView(true);
+              requestScrollReset();
             }}
           >
             <Ico node={Heart} size={15} />
