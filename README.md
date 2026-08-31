@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/DevM0B1US/Embertune/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/DevM0B1US/Embertune/ci.yml?branch=main&label=CI" alt="CI status" /></a>
-  <a href="COPYING"><img src="https://img.shields.io/badge/license-GPL--3.0-orange" alt="License: GPL v3" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-orange" alt="License: GPL v3" /></a>
   <img src="https://img.shields.io/badge/Tauri-2-blue" alt="Tauri 2" />
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey" alt="Platform" />
 </p>
@@ -99,6 +99,20 @@ sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev \
 
 CI runs the same checks locally do: `npm run typecheck`, `npm run lint`,
 `npm run test`, and `cargo check`/`cargo test` in `src-tauri`.
+
+## Releases
+
+Releases are automatic — no manual packaging:
+
+1. Bump `"version"` in `src-tauri/tauri.conf.json` (e.g. `0.1.0` → `0.2.0`)
+2. Commit and push to `main`
+3. The `release` workflow tags `v0.2.0`, the `build` workflow then compiles
+   every target and publishes the GitHub release with installers attached:
+   `.deb` (Debian/Ubuntu), `.rpm` (Fedora), `.AppImage` (Arch & any distro),
+   `-setup.exe` / `.msi` (Windows)
+
+Pushes that don't change the version never create a release. Prebuilt binaries
+live on the [Releases page](https://github.com/DevM0B1US/Embertune/releases).
 
 ## Data
 

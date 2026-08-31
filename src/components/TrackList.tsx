@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount } from "solid-js";
 import TrackRow from "./TrackRow";
 import { useRowFx } from "./rowfx";
+import { onScrollFrame } from "../lib/scrollsync";
 import { takeScrollReset, viewItems, viewKey } from "../lib/state/library";
 import { dlList } from "../lib/state/downloads";
 import { playTrack, togglePlay } from "../lib/state/player";
@@ -14,9 +15,11 @@ import type { Track } from "../lib/types";
 //  · #track-list is position:relative with an explicit height; rows
 //    are absolutely positioned <li>s translated with translate3d().
 //  · The window memo slices the visible range (+BUFFER rows on each
-//    side) driven by an rAF-coalesced scroll signal; Solid's <For>
-//    diffs the slice by track identity — only rows entering/leaving
-//    the window are created or destroyed, middle rows are untouched.
+//    side) driven by a synchronous scroll signal — updated in the same
+//    frame the scroll position changes (scroll event steps, or
+//    smoothwheel's same-frame emit); Solid's <For> diffs the slice by
+//    track identity — only rows entering/leaving the window are
+//    created or destroyed, middle rows are untouched.
 //  · Track objects are reference-stable across refreshes (the library
 //    store merges unchanged tracks), so scrolling, filtering and
 //    background refreshes never recreate rows wholesale — no flashing.
@@ -72,8 +75,12 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
     const t = items[next]!;
     setSelId(t.id);
     // keep the selected row centered — through the container's own scroll
-    // pipeline so the scrollbar, ripple and smoothwheel stay in sync
-    const top = next * rowH() - viewportH() / 2 + rowH() / 2;
+    // pipeline so the scrollbar, ripple and smoothwheel stay in sync.
+    // listEl.offsetTop (lib-bar + padding above the list) must be added:
+    // the row's position inside the CONTENT is not its position in the
+    // scroll coordinate space.
+    const top =
+      listEl.offsetTop + next * rowH() + rowH() / 2 - viewportH() / 2;
     props.viewEl.scrollTo({ top: Math.max(0, top) });
   }
 
@@ -123,19 +130,40 @@ export default function TrackList(props: { viewEl: HTMLElement }) {
     setMounted(true);
     setViewportH(view.clientHeight);
 
-    // ── scroll → rAF-coalesced window updates + art-load gating ────
-    let rafPending = false;
-    const onScroll = () => {
-      if (rafPending) return;
-      rafPending = true;
-      requestAnimationFrame(() => {
-        rafPending = false;
-        fx.notifyScrollActivity();
-        setScrollTop(view.scrollTop);
-      });
+    // ── scroll → window updates + art-load gating ───────────────────
+    // Synchronous, not rAF-queued: scroll events already fire once per
+    // frame in the rendering update's scroll steps — BEFORE rAF
+    // callbacks and paint — so updating here lands in the same frame.
+    // Queueing another rAF used to add a needless hop; and for
+    // smoothwheel-driven scrolling the same-frame path is provided by
+    // the onScrollFrame subscription below (scroll events for a
+    // scrollTop written inside rAF only fire the NEXT frame).
+    let lastSyncTop = -1;
+    let scrollIdleTimer: number | undefined;
+    const sync = (): void => {
+      const st = view.scrollTop;
+      if (st === lastSyncTop) return;
+      lastSyncTop = st;
+      fx.notifyScrollActivity();
+      // suppress hover transitions while the list is moving: rows
+      // sliding under a stationary cursor would otherwise fire a
+      // 180ms background repaint animation on every row they cross
+      listEl.classList.add("scrolling");
+      window.clearTimeout(scrollIdleTimer);
+      scrollIdleTimer = window.setTimeout(
+        () => listEl.classList.remove("scrolling"),
+        150
+      );
+      setScrollTop(st);
     };
+    const onScroll = (): void => sync();
+    const detachFrameSync = onScrollFrame(sync); // smoothwheel frames
     view.addEventListener("scroll", onScroll, { passive: true });
-    onCleanup(() => view.removeEventListener("scroll", onScroll));
+    onCleanup(() => {
+      detachFrameSync();
+      view.removeEventListener("scroll", onScroll);
+      window.clearTimeout(scrollIdleTimer);
+    });
 
     // ── viewport resizes (window, zoom, panel toggles) ─────────────
     const ro = new ResizeObserver(() => setViewportH(view.clientHeight));

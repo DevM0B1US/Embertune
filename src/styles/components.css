@@ -209,7 +209,11 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0;
+  /* inset the list from the window edges — full-bleed rows touched the
+     app border, got clipped by the rounded corners and ran under the
+     overlay scrollbar (reported: "wide and cut off on the right and
+     left"); the virtualization math accounts for the list's offsetTop */
+  padding: 10px 16px 14px;
   -webkit-overflow-scrolling: touch;
   /* virtualized list: the browser must not re-anchor scroll offsets
      when window rows mount/unmount above the viewport */
@@ -283,6 +287,9 @@
   padding: 0;
   border-radius: 8px;
   position: relative;
+  /* clip row corners to the radius (first/last rows) — safe: all rows
+     live inside the list's explicit height, nothing else overflows */
+  overflow: clip;
 }
 
 /* row — positioned by the list, never by document flow */
@@ -292,6 +299,18 @@
   left: 0;
   width: 100%;
   margin: 0;
+  /* contain each row's layout+paint: a row's internal style changes
+     (hover bg, playing gradient) can't invalidate neighbors during
+     scroll — cheaper frames on WebKitGTK */
+  contain: layout paint;
+}
+
+/* while the list is moving, kill hover transitions: rows sliding under
+   a stationary cursor would otherwise run a 180ms background repaint
+   animation on every row they cross. Class is toggled by TrackList's
+   scroll sync (removed 150ms after the scroll goes idle). */
+#track-list.scrolling .trow {
+  transition: none;
 }
 
 /* visual row */
@@ -475,12 +494,14 @@
 }
 
 /* --- library bar --- */
+/* .view provides the outer 16px inset — this bar only adds a hair of
+   its own so title/controls align with the list's inner text */
 .lib-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 10px 20px 0;
+  padding: 6px 2px 0;
   margin-bottom: 10px;
 }
 

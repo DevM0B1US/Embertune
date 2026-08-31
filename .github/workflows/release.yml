@@ -1,0 +1,54 @@
+# Automatic releases.
+#
+# Pushes to main are checked against the newest `v*` tag: if the version
+# in src-tauri/tauri.conf.json has no tag yet, the tag is created and
+# pushed — which triggers build.yml to compile every target and publish
+# the GitHub release with installers attached.
+#
+# So a release ship flow is exactly:
+#   1. bump "version" in src-tauri/tauri.conf.json (e.g. 0.1.0 → 0.2.0)
+#   2. commit + push to main
+#   → tag v0.2.0 is created here, build.yml builds and releases it
+#
+# Pushes that don't change the version are no-ops (job exits in ~5s).
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# serialize version checks so two rapid pushes can't race on the tag
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+permissions:
+  contents: write # push the release tag
+
+jobs:
+  tag:
+    name: Tag new version (triggers release build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create tag when tauri.conf.json version is unreleased
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          TAG="v${VERSION}"
+          echo "tauri.conf.json version: ${VERSION} → tag ${TAG}"
+
+          # ls-remote checks the remote (works on shallow checkouts)
+          if git ls-remote --exit-code --tags "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::notice::Tag ${TAG} already exists — nothing to release"
+            exit 0
+          fi
+
+          git config user.name  "embertune-release-bot"
+          git config user.email "release@embertune.local"
+          git tag -a "${TAG}" -m "Embertune ${TAG}" "${GITHUB_SHA}"
+          git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}"
+          echo "::notice::Tag ${TAG} pushed — build.yml will publish the release"
