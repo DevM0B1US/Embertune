@@ -20,7 +20,6 @@ import {
 } from "../lib/state/sleep";
 import { Ico } from "../lib/icons";
 import { Mic, Minus, Maximize, Settings, Timer, X } from "lucide";
-import logoUrl from "../assets/logo.svg";
 
 // ── url input ───────────────────────────────────────────────────────
 function autoGrow(el: HTMLTextAreaElement): void {
@@ -38,7 +37,6 @@ const SLEEP_OPTIONS: Array<{ min: number; label: string }> = [
 
 export default function Topbar() {
   let urlInput!: HTMLTextAreaElement;
-  let customInput!: HTMLInputElement;
 
   // ── sleep popover ─────────────────────────────────────────────────
   let sleepPop!: HTMLDivElement;
@@ -101,36 +99,9 @@ export default function Topbar() {
     const ms = sleepRemainingMs();
     return ms !== null ? fmtSleepRemaining(ms) : "—";
   };
-  const sleepPercent = () => {
-    const total = sleepTotalMin();
-    const ms = sleepRemainingMs();
-    if (!total || ms === null) return 0;
-    return Math.max(0, Math.min(100, (ms / (total * 60000)) * 100));
-  };
-
-  const submitCustomMinutes = (): void => {
-    const v = parseInt(customInput.value, 10);
-    if (!v || v < 1 || v > 480) {
-      toast("Enter 1–480 minutes");
-      return;
-    }
-    setSleepTimer(v);
-  };
 
   return (
     <header id="topbar" data-tauri-drag-region="">
-      <div class="brand" title="Embertune" data-tauri-drag-region="true">
-        <img
-          class="brand-mark"
-          src={logoUrl}
-          alt="Embertune"
-          draggable={false}
-          data-tauri-drag-region="false"
-        />
-        <span class="brand-name" data-tauri-drag-region="true">
-          Ember<b>tune</b>
-        </span>
-      </div>
       <textarea
         ref={urlInput}
         id="url-input"
@@ -203,59 +174,20 @@ export default function Topbar() {
       </div>
 
       <div ref={sleepPop} id="sleep-pop" classList={{ open: sleepOpen() }}>
-        <div class="sleep-head">
-          <div class="sleep-head-title">
-            <Ico node={Timer} size={14} /> Sleep timer
-          </div>
-          <button
-            id="sleep-close"
-            class="tbtn"
-            title="Close"
-            onClick={(e) => {
-              e.stopPropagation();
-              setSleepOpen(false);
-            }}
-          >
-            <Ico node={X} size={14} />
-          </button>
-        </div>
-        <div class="sleep-count">
-          <div class="sleep-time-row">
-            <span id="sleep-time">{sleepCountdown()}</span>
-            <span class="sleep-remaining">remaining</span>
-          </div>
-          <div class="sleep-bar">
-            <div id="sleep-bar-fill" style={{ width: `${sleepPercent()}%` }} />
-          </div>
-        </div>
-        <div id="sleep-pills-pop" class="sleep-options">
-          <For each={SLEEP_OPTIONS}>
-            {(opt) => (
-              <button
-                class="sleep-opt"
-                classList={{ active: (sleepTotalMin() ?? 0) === opt.min }}
-                onClick={() => setSleepTimer(opt.min)}
-              >
-                <span>{opt.label}</span>
-              </button>
-            )}
-          </For>
-        </div>
-        <div class="sleep-custom">
-          <input
-            ref={customInput}
-            type="number"
-            min="1"
-            max="480"
-            placeholder="Custom minutes"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitCustomMinutes();
-            }}
-          />
-          <button id="sleep-custom-set" class="btn" onClick={submitCustomMinutes}>
-            Set
-          </button>
-        </div>
+        <For each={SLEEP_OPTIONS}>
+          {(opt) => (
+            <button
+              class="sleep-opt"
+              classList={{ active: (sleepTotalMin() ?? 0) === opt.min }}
+              onClick={() => setSleepTimer(opt.min)}
+            >
+              {opt.label}
+              {(sleepTotalMin() ?? 0) === opt.min && sleepTotalMin() ? (
+                <span class="sleep-remaining">{sleepCountdown()}</span>
+              ) : null}
+            </button>
+          )}
+        </For>
       </div>
     </header>
   );
